@@ -17,10 +17,11 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 
-from mypy.main import main  # type: ignore
 import os.path
 import sys
 import unittest
+
+from mypy.main import main  # type: ignore
 
 
 class Types(unittest.TestCase):

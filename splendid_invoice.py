@@ -20,11 +20,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 import argparse
 import bisect
 import csv
-from dataclasses import dataclass
-from datetime import date, datetime
 import math
 import sys
-from typing import cast, Iterator, List, Optional, TextIO, Tuple, Type, TypeVar
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Iterator, List, Optional, TextIO, Tuple, Type, TypeVar, cast
 
 import popplerqt5  # type: ignore
 
