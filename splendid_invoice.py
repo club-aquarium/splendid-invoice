@@ -352,7 +352,11 @@ class Invoice:
                 delivery_id, delivery_date = page.get_delivery_info()
             except ValueError:
                 pass
-            invoice_id, invoice_date = page.get_invoice_info()
+            try:
+                invoice_id, invoice_date = page.get_invoice_info()
+            except (AttributeError, ValueError):
+                invoice_id = ""
+                invoice_date = cast(date, "")
             for row in page.parse_table():
                 padded_row = (
                     delivery_date,
