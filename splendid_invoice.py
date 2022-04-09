@@ -262,6 +262,9 @@ class InvoicePage(TextGrid):
     def _sort_into_columns(
         cls, row: List[GridTextBox]
     ) -> List[List[popplerqt5.Poppler.TextBox]]:
+        """Sort text boxes into columns. The text box has to start and end
+        in the same column, otherwise it is discarded.
+        """
         cols = [[] for _ in cls.columns]  # type: List[List[GridTextBox]]
         for g, box in row:
             for col, (left, right) in zip(cols, cls.columns):
@@ -282,6 +285,9 @@ class InvoicePage(TextGrid):
     def _format_columns(
         self, columns: List[List[popplerqt5.Poppler.TextBox]]
     ) -> ParsedRow:
+        """Join column texts to string and split units from the column
+        "Anzahl" into a separate column.
+        """
         row = []
         for col in columns:
             texts = []
@@ -293,15 +299,24 @@ class InvoicePage(TextGrid):
         return cast(ParsedRow, tuple(row))
 
     def parse_table(self) -> Iterator[ParsedRow]:
+        """This iterates over the text boxes row by row and tries to sort
+        them into each of their six columns. Rows with an empty first
+        column/missing an article number are appended to the previous row.
+
+        TODO handle pages with multiple deliveries. Currently the second
+        "Lieferschein ... Lieferdarum ..." is added to its above article.
+        """
+
         rows = self.iter_rows()
-        # skip header
+
+        # skip until table head
         for row in rows:
             if self.is_table_header(row):
                 break
 
         prev_columns = None
         for row in rows:
-            # empty row finishes the previous record
+            # empty row finishes the previous record, begin a new
             if not row:
                 if prev_columns is not None and any(map(bool, prev_columns)):
                     yield self._format_columns(prev_columns)
@@ -319,7 +334,7 @@ class InvoicePage(TextGrid):
 
             columns = self._sort_into_columns(row)
             if not columns[0]:
-                # article ID unset
+                # article ID unset, add to above article
                 if not columns[1]:
                     # description unset, ignore
                     pass
@@ -328,6 +343,7 @@ class InvoicePage(TextGrid):
                     for prev_col, col in zip(prev_columns, columns):
                         prev_col.extend(col)
             else:
+                # a new article has begun
                 if prev_columns is not None and any(map(bool, prev_columns)):
                     yield self._format_columns(prev_columns)
                 prev_columns = columns
