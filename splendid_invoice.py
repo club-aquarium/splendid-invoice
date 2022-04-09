@@ -432,15 +432,16 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("invoice", nargs="+", metavar="<invoice>")
     args = p.parse_args(argv)
 
-    first = True
-    for name in args.invoice:
-        csv_from_pdf(
-            sys.stdout,
-            Invoice.load(name),
-            write_headers=first,
-            print_pages=args.verbose,
-        )
-        first = False
+    with open(sys.stdout.fileno(), "w", encoding="iso-8859-1", newline="") as stdout:
+        first = True
+        for name in args.invoice:
+            csv_from_pdf(
+                stdout,
+                Invoice.load(name),
+                write_headers=first,
+                print_pages=args.verbose,
+            )
+            first = False
 
 
 if __name__ == "__main__":
