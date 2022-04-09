@@ -137,12 +137,11 @@ class TextGrid:
     def iter_rows(self) -> Iterator[List[GridTextBox]]:
         y = 0
         row = []  # type: List[GridTextBox]
-        for g, box in self.text_boxes:
-            if g.y != y:
-                if row:
-                    yield row
-                    row = []
-                y = g.y
+        for g, box in self.text_boxes:  # they are sorted by Y-coordinate
+            while y < g.y:
+                yield row
+                row = []
+                y += 1
             row.append((g, box))
         if row:
             yield row
@@ -226,6 +225,11 @@ class InvoicePage(TextGrid):
                 return True
         return False
 
+    @staticmethod
+    def text_equals(row: List[GridTextBox], text: str) -> bool:
+        row_text = " ".join(b.text() for _, b in row)
+        return row_text == text
+
     def _find_text(self, text: str) -> popplerqt5.Poppler.TextBox:
         for _, box in self.text_boxes:
             if box.text() == text:
@@ -297,6 +301,18 @@ class InvoicePage(TextGrid):
 
         prev_columns = None
         for row in rows:
+            # empty row finishes the previous record
+            if not row:
+                if prev_columns is not None and any(map(bool, prev_columns)):
+                    yield self._format_columns(prev_columns)
+                prev_columns = None
+                continue
+
+            if self.text_equals(
+                row, "Das Datum der Lieferung entspricht dem Datum des Lieferscheines."
+            ):
+                continue
+
             # end on next header
             if self.contains_underscore_line(row):
                 break
@@ -308,7 +324,7 @@ class InvoicePage(TextGrid):
                     # description unset, ignore
                     pass
                 elif prev_columns is not None:
-                    # append to previous row
+                    # append to previous record
                     for prev_col, col in zip(prev_columns, columns):
                         prev_col.extend(col)
             else:
@@ -409,3 +425,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             print_pages=args.verbose,
         )
         first = False
+
+
+if __name__ == "__main__":
+    main()
