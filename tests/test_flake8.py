@@ -26,6 +26,6 @@ class Flake8(unittest.TestCase):
     def test_flake8(self) -> None:
         directory = os.path.join(os.path.dirname(__file__), "..")
         p = subprocess.run(
-            ["flake8", "setup.py", "splendid_invoice.py", "tests"], cwd=directory
+            ["flake8", "setup.py", "splendid_invoice.py", "bin", "tests"], cwd=directory
         )
         self.assertEqual(p.returncode, 0)

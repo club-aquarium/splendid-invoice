@@ -26,7 +26,14 @@ class Black(unittest.TestCase):
     def test_black(self) -> None:
         directory = os.path.join(os.path.dirname(__file__), "..")
         p = subprocess.run(
-            ["black", "--check", "setup.py", "splendid_invoice.py", "tests"],
+            [
+                "black",
+                "--check",
+                "setup.py",
+                "splendid_invoice.py",
+                "bin",
+                "tests",
+            ],
             cwd=directory,
         )
         self.assertEqual(p.returncode, 0)

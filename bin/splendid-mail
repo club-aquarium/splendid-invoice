@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""
+splendid-invoice
+Copyright (C) 2022  schnusch
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""
+
+import argparse
+import email
+import email.policy
+import imaplib
+import re
+import shlex
+import sys
+import threading
+
+from email.message import Message
+from queue import Queue
+from tempfile import NamedTemporaryFile
+from typing import Iterator, List, Optional, Tuple
+
+import popplerqt5  # type: ignore
+from splendid_invoice import Invoice, csv_from_pdf
+
+
+def filter_by_sender(msg: Message) -> bool:
+    addr = email.header.decode_header(msg["From"])[0][0]
+    if isinstance(addr, bytes):
+        senderaddr = addr.decode("iso-8859-1")
+    else:
+        assert isinstance(addr, str)
+        senderaddr = addr
+    return (
+        re.match(r".*@(getraenke-pfeifer\.de|splendid-drinks\.com)>?$", senderaddr)
+        is not None
+    )
+
+
+def iter_pdfs(
+    mbox: imaplib.IMAP4, message_ids: List[str]
+) -> Iterator[Tuple[Message, str, bytes]]:
+    for message_id in message_ids:
+        res, data = mbox.fetch(message_id, "(RFC822.HEADER)")
+        assert res == "OK"
+        msg = email.message_from_bytes(data[0][1], policy=email.policy.default)
+
+        if not filter_by_sender(msg):
+            continue
+
+        res, data = mbox.fetch(message_id, "(RFC822)")
+        assert res == "OK"
+        msg = email.message_from_bytes(data[0][1], policy=email.policy.default)
+        for part in msg.walk():
+            name = part.get_filename()
+            if (
+                part.get_content_maintype() != "multipart"
+                and part.get("Content-Disposition") is not None
+                and (
+                    part.get_content_type() == "application/pdf"
+                    or name.endswith(".pdf")
+                )
+            ):
+                yield (msg, name, part.get_payload(decode=True))
+
+
+def fetch_pdfs(
+    host: str, login: str, password: str, mailbox: Optional[str] = None
+) -> Iterator[Tuple[Message, bytes]]:
+    with imaplib.IMAP4_SSL(host) as mbox:
+        mbox.login(login, password)
+        if mailbox is not None:
+            mbox.select(mailbox)
+        res, data = mbox.search(None, "ALL")
+        assert res == "OK"
+
+        message_ids = data[0].split()
+
+        queue = Queue(2)  # type: Queue[Optional[Tuple[Message, bytes]]]
+
+        def thread_proc() -> None:
+            for x in iter_pdfs(mbox, message_ids):
+                queue.put(x)
+            queue.put(None)
+
+        t = threading.Thread(target=thread_proc, daemon=True)
+        t.start()
+
+        yield from iter(queue.get, None)
+
+        t.join()
+
+
+def print_mail_info(msg: Message, name: str) -> None:
+    sys.stderr.write("\x1b[33m")
+    try:
+        for header in ("Subject", "From", "Date"):
+            for value, _ in email.header.decode_header(msg.get(header, "")):
+                print(f"{header}:", value, file=sys.stderr)
+        print("Attachment:", name, file=sys.stderr)
+    finally:
+        sys.stderr.write("\x1b[39m")
+        sys.stderr.flush()
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    example = " ".join(
+        map(
+            shlex.quote,
+            [
+                sys.argv[0],
+                "-v",
+                "-H",
+                "mx2f77.netcup.net",
+                "-l",
+                "archiv@club-aquarium.de",
+                "-m",
+                '"INBOX.Rechnungen Eingang"',
+            ],
+        )
+    )
+    p = argparse.ArgumentParser(
+        description="Download PDF attachments from mailbox and feed them into splendid-invoice",
+        epilog=f"Example: {example}",
+    )
+    p.add_argument("-H", "--host", required=True, help="IMAP host")
+    p.add_argument("-l", "--login", required=True, help="IMAP login")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("-p", "--password", help="IMAP password")
+    g.add_argument(
+        "--password-from-stdin",
+        action="store_true",
+        help="read IMAP password from stdin",
+    )
+    p.add_argument(
+        "-m", "--mailbox", help="mailbox sub-directory, be sure to quote properly"
+    )
+    p.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print parsed PDF to standard error.",
+    )
+    p.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Wait for user to press Enter after each PDF.",
+    )
+    args = p.parse_args(argv)
+
+    with open(sys.stdout.fileno(), "w", encoding="iso-8859-1", newline="") as stdout:
+        first = True
+        for msg, pdfname, pdfdata in fetch_pdfs(
+            host=args.host,
+            login=args.login,
+            password=input() if args.password is None else args.password,
+            mailbox=args.mailbox,
+        ):
+            if not first:
+                print(file=sys.stderr)
+            print_mail_info(msg, pdfname)
+            try:
+                invoice = Invoice(popplerqt5.Poppler.Document.loadFromData(pdfdata))
+                csv_from_pdf(
+                    stdout, invoice, write_headers=first, print_pages=args.verbose
+                )
+            except Exception:
+                with NamedTemporaryFile(
+                    "wb", prefix="splendid-invoice.", suffix=".pdf"
+                ) as fp:
+                    fp.write(pdfdata)
+                    fp.flush()
+                    print(
+                        f"Cannot parse PDF file, written to {fp.name} for inspection.",
+                        file=sys.stderr,
+                    )
+                raise
+            first = False
+
+            if args.confirm:
+                print(end="Press Enter to continue...")
+                input()
+
+
+if __name__ == "__main__":
+    main()
