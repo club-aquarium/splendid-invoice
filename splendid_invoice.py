@@ -21,6 +21,7 @@ import argparse
 import bisect
 import csv
 import math
+import re
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -273,14 +274,13 @@ class InvoicePage(TextGrid):
         return cols
 
     def _split_count(self, count: str) -> List[str]:
-        parts = count.split(maxsplit=1)
-        if len(parts) < 2:
+        m = re.match(r"^(\d+)(-)? *(.*)$", count)
+        if m is None:
             return ["", count]
-        try:
-            int(parts[0], 10)
-        except ValueError:
-            return ["", count]
-        return parts
+        count, minus, unit = m.groups()
+        if minus is not None:
+            count = "-" + count
+        return [count, unit]
 
     def _format_columns(
         self, columns: List[List[popplerqt5.Poppler.TextBox]]
