@@ -33,7 +33,7 @@ from tempfile import NamedTemporaryFile
 from typing import Iterator, List, Optional, Tuple
 
 import popplerqt5  # type: ignore
-from splendid_invoice import Invoice, csv_from_pdf, open_stdout
+from splendid_invoice import MonospaceInvoice, csv_from_pdf, open_stdout
 
 
 def filter_by_sender(msg: Message) -> bool:
@@ -172,7 +172,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 print(file=sys.stderr)
             print_mail_info(msg, pdfname)
             try:
-                invoice = Invoice(popplerqt5.Poppler.Document.loadFromData(pdfdata))
+                invoice = MonospaceInvoice(
+                    popplerqt5.Poppler.Document.loadFromData(pdfdata)
+                )
                 csv_from_pdf(
                     stdout, invoice, write_headers=first, print_pages=args.verbose
                 )

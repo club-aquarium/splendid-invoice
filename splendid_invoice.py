@@ -25,7 +25,16 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Iterator, List, Optional, TextIO, Tuple, Type, TypeVar, cast
+from typing import (
+    Iterator,
+    List,
+    Optional,
+    TextIO,
+    Tuple,
+    Type,
+    TypeVar,
+    cast,
+)
 
 import popplerqt5  # type: ignore
 
@@ -201,7 +210,21 @@ PaddedRow = Tuple[
 ]
 
 
-class InvoicePage(TextGrid):
+class InvoicePage:
+    def get_delivery_info(self) -> Tuple[str, date]:
+        raise NotImplementedError
+
+    def get_invoice_info(self) -> Tuple[str, date]:
+        raise NotImplementedError
+
+    def parse_table(self) -> Iterator[ParsedRow]:
+        raise NotImplementedError
+
+    def print_page(self, fileobj: TextIO) -> None:
+        raise NotImplementedError
+
+
+class MonospaceInvoicePage(InvoicePage, TextGrid):
     columns = [
         (0, 10),
         (9, 42),
@@ -357,6 +380,9 @@ class InvoicePage(TextGrid):
         if prev_columns is not None and any(map(bool, prev_columns)):
             yield self._format_columns(prev_columns)
 
+    def print_page(self, fileobj: TextIO) -> None:
+        print(self.get_used_text(), file=fileobj)
+
 
 class Invoice:
     headers = (
@@ -373,14 +399,8 @@ class Invoice:
         "Betrag",
     )
 
-    @classmethod
-    def load(cls, name: str) -> "Invoice":
-        return cls(popplerqt5.Poppler.Document.load(name))
-
-    def __init__(self, doc: popplerqt5.Poppler.Document):
-        self.pages = [
-            InvoicePage.from_page(doc.page(i)) for i in range(len(doc))
-        ]  # type: List[InvoicePage]
+    def __init__(self) -> None:
+        self.pages = []  # type: List[InvoicePage]
 
     def __iter__(self) -> Iterator[PaddedRow]:
         delivery_id = ""
@@ -406,10 +426,21 @@ class Invoice:
                 assert len(padded_row) == len(self.headers)
                 yield padded_row
 
-    def print_pages(self) -> None:
+    def print_pages(self, fileobj: TextIO = sys.stderr) -> None:
         for page in self.pages:
-            print(page.get_used_text(), file=sys.stderr)
-            print(file=sys.stderr)
+            page.print_page(fileobj)
+            print(file=fileobj)
+
+
+class MonospaceInvoice(Invoice):
+    @classmethod
+    def load(cls, name: str) -> "MonospaceInvoice":
+        return cls(popplerqt5.Poppler.Document.load(name))
+
+    def __init__(self, doc: popplerqt5.Poppler.Document):
+        self.pages = [
+            MonospaceInvoicePage.from_page(doc.page(i)) for i in range(len(doc))
+        ]  # type: List[InvoicePage]
 
 
 def csv_from_pdf(
@@ -443,7 +474,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         for name in args.invoice:
             csv_from_pdf(
                 stdout,
-                Invoice.load(name),
+                MonospaceInvoice.load(name),
                 write_headers=first,
                 print_pages=args.verbose,
             )
