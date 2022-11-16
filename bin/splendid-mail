@@ -178,7 +178,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 )
             except Exception:
                 with NamedTemporaryFile(
-                    "wb", prefix="splendid-invoice.", suffix=".pdf"
+                    "wb", prefix="splendid-invoice.", suffix=".pdf", delete=False
                 ) as fp:
                     fp.write(pdfdata)
                     fp.flush()
