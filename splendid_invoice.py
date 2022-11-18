@@ -30,6 +30,12 @@ from typing import Iterator, List, Optional, TextIO, Tuple, Type, TypeVar, cast
 import popplerqt5  # type: ignore
 
 
+def open_stdout() -> TextIO:
+    return open(
+        sys.stdout.fileno(), "w", encoding="iso-8859-1", newline="", closefd=False
+    )
+
+
 def approx_gcd(a: Optional[float], b: float) -> float:
     tolerance = 0.01
 
@@ -432,7 +438,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("invoice", nargs="+", metavar="<invoice>")
     args = p.parse_args(argv)
 
-    with open(sys.stdout.fileno(), "w", encoding="iso-8859-1", newline="") as stdout:
+    with open_stdout() as stdout:
         first = True
         for name in args.invoice:
             csv_from_pdf(

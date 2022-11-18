@@ -33,7 +33,7 @@ from tempfile import NamedTemporaryFile
 from typing import Iterator, List, Optional, Tuple
 
 import popplerqt5  # type: ignore
-from splendid_invoice import Invoice, csv_from_pdf
+from splendid_invoice import Invoice, csv_from_pdf, open_stdout
 
 
 def filter_by_sender(msg: Message) -> bool:
@@ -160,7 +160,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     args = p.parse_args(argv)
 
-    with open(sys.stdout.fileno(), "w", encoding="iso-8859-1", newline="") as stdout:
+    with open_stdout() as stdout:
         first = True
         for msg, pdfname, pdfdata in fetch_pdfs(
             host=args.host,
