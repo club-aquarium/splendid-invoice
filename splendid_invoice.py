@@ -25,10 +25,15 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import cached_property
+from itertools import zip_longest
+from heapq import merge
 from typing import (
     Iterator,
     List,
+    NamedTuple,
     Optional,
+    Set,
     TextIO,
     Tuple,
     Type,
@@ -443,6 +448,387 @@ class MonospaceInvoice(Invoice):
         ]  # type: List[InvoicePage]
 
 
+class RowOfTextBoxes(NamedTuple):
+    # having the greater value first allows us to use bisect
+    bottom: float
+    top: float
+    # by using a tuple we can use bisect
+    boxes: List[Tuple[float, int, popplerqt5.Poppler.TextBox]]
+
+
+class TableColumn(NamedTuple):
+    # having the greater value first allows us to use bisect
+    right: float
+    left: float
+
+
+def join_rows(a: RowOfTextBoxes, b: RowOfTextBoxes) -> RowOfTextBoxes:
+    return RowOfTextBoxes(
+        bottom=max(a.bottom, b.bottom),
+        top=max(a.top, b.top),
+        boxes=list(merge(a.boxes, b.boxes, key=lambda x: x[0])),
+    )
+
+
+def only_starts_of_next_word_chains(
+    boxes: List[popplerqt5.Poppler.TextBox],
+) -> Set[popplerqt5.Poppler.TextBox]:
+    all = set(boxes)
+    starts = set()  # type: Set[popplerqt5.Poppler.TextBox]
+    while True:
+        try:
+            tbox = all.pop()
+        except KeyError:
+            break
+        starts.add(tbox)
+        tbox = tbox.nextWord()
+        while tbox:
+            all.discard(tbox)
+            starts.discard(tbox)
+            tbox = tbox.nextWord()
+    return starts
+
+
+def guess_columns(table: List[List[popplerqt5.Poppler.TextBox]]) -> List[TableColumn]:
+    """Find common horizontal whitespace in multiple rows of text. The
+    common whitespace are our column separators of the table.
+    For the way this works using bisect look at NewInvoicePage._as_rows
+    """
+    columns = []  # type: List[TableColumn]
+    for row in table:
+        for tbox in row:
+            # get dimensions of the next-word-chain
+            bbox = tbox.boundingBox()
+            left = bbox.left()
+            right = bbox.right()
+            tbox = tbox.nextWord()
+            while tbox:
+                bbox = tbox.boundingBox()
+                left = min(left, bbox.left())
+                right = max(right, bbox.right())
+                tbox = tbox.nextWord()
+
+            # see NewInvoicePage._as_rows
+            i = bisect.bisect_left(columns, (left,))
+            if i < len(columns) and columns[i].left <= right:
+                column = columns[i]
+                columns[i] = TableColumn(
+                    right=max(column.right, right),
+                    left=min(column.left, left),
+                )
+
+                # multiple columns might overlap now, see NewInvoicePage._as_rows
+                for j in reversed(range(0, i)):
+                    a = columns[j]
+                    b = columns[i]
+                    if a.left <= b.right and b.left <= a.right:
+                        columns[j] = TableColumn(
+                            right=max(a.right, b.right),
+                            left=min(a.left, b.left),
+                        )
+                        columns.pop(i)
+                        i -= 1
+                    else:
+                        break
+                j = i + 1
+                while j < len(columns):
+                    a = columns[i]
+                    b = columns[j]
+                    if a.left <= b.right and b.left <= a.right:
+                        columns[i] = TableColumn(
+                            right=max(a.right, b.right),
+                            left=min(a.left, b.left),
+                        )
+                        columns.pop(j)
+                    else:
+                        break
+            else:
+                columns.insert(i, TableColumn(right=right, left=left))
+            assert columns[i].left < columns[i].right
+
+    return columns
+
+
+def get_column(columns: List[TableColumn], x: float) -> int:
+    """Get index of column x fits into."""
+    i = bisect.bisect_left(columns, (x,))
+    if i < len(columns) and columns[i].left <= x:
+        return i
+    raise ValueError(f"{x} does not fit in columns {columns}")
+
+
+def iter_row(
+    row: List[popplerqt5.Poppler.TextBox],
+) -> Iterator[popplerqt5.Poppler.TextBox]:
+    for tbox in row:
+        while tbox:
+            yield tbox
+            tbox = tbox.nextWord()
+
+
+def row_is_words(row: List[popplerqt5.Poppler.TextBox], words: List[str]) -> bool:
+    for tbox, word in zip_longest(iter_row(row), words):
+        if tbox is None or word is None or tbox.text() != word:
+            return False
+    return True
+
+
+def mark_row_as_used(row: List[popplerqt5.Poppler.TextBox]) -> None:
+    for tbox in iter_row(row):
+        tbox.used = True
+
+
+NewColumns = Tuple[
+    List[popplerqt5.Poppler.TextBox],
+    List[popplerqt5.Poppler.TextBox],
+    List[popplerqt5.Poppler.TextBox],
+    List[popplerqt5.Poppler.TextBox],
+    List[popplerqt5.Poppler.TextBox],
+]
+
+
+class NewInvoicePage(InvoicePage):
+    def __init__(self, page: popplerqt5.Poppler.Page):
+        self.text_boxes = only_starts_of_next_word_chains(page.textList())
+
+    @cached_property
+    def _as_rows(self) -> List[List[popplerqt5.Poppler.TextBox]]:
+        """Sort page content into rows of text. When a TextBox overlaps with
+        an existing row it is added to it and the row's size is increased to fit
+        all it's TextBoxes.
+        We only ever store and care for words, that start a next-word-chain,
+        because it's followers are assumed to belong to the same row. But they
+        are included when increasing a row's height.
+        """
+        rows = []  # type: List[RowOfTextBoxes]
+        for tbox in self.text_boxes:
+            bbox = tbox.boundingBox()
+
+            # To check if two intervals overlap we test if
+            #     a.top <= b.bottom && b.top <= a.bottom
+            # where a is the bbox to insert and b is one of the existing rows.
+            # The bisect below already does a.top <= b.bottom for us.
+            i = bisect.bisect_left(rows, (bbox.top(),))
+            if i < len(rows) and rows[i].top <= bbox.bottom():
+                row = rows[i]
+                top = row.top
+                bottom = row.bottom
+                # because we only get words, that start a next-word-chain,
+                # we add it's followers to the rows bounding box
+                word = tbox
+                while word:
+                    word_bbox = word.boundingBox()
+                    top = min(top, word_bbox.top())
+                    bottom = max(bottom, word_bbox.bottom())
+                    word = word.nextWord()
+                # use an ever increasing 2nd member so bisect never compares TextBox
+                bisect.insort(row.boxes, (bbox.left(), len(row.boxes), tbox))
+                rows[i] = RowOfTextBoxes(bottom=bottom, top=top, boxes=row.boxes)
+
+                # multiple rows might overlap now
+                for j in reversed(range(0, i)):
+                    a = rows[j]
+                    b = rows[i]
+                    if a.top <= b.bottom and b.top <= a.bottom:
+                        rows[j] = join_rows(rows[j], rows[i])
+                        rows.pop(i)
+                        i -= 1
+                    else:
+                        break
+                j = i + 1
+                while j < len(rows):
+                    a = rows[i]
+                    b = rows[j]
+                    if a.top <= b.bottom and b.top <= a.bottom:
+                        rows[i] = join_rows(rows[i], rows[j])
+                        rows.pop(j)
+                    else:
+                        break
+            else:
+                rows.insert(
+                    i,
+                    RowOfTextBoxes(
+                        bottom=bbox.bottom(),
+                        top=bbox.top(),
+                        boxes=[(bbox.left(), 0, tbox)],
+                    ),
+                )
+            assert rows[i].top < rows[i].bottom
+
+        return [[tbox for _, _, tbox in row.boxes] for row in rows]
+
+    def get_delivery_info(self) -> Tuple[str, date]:
+        number_next = False
+        delivery_number = None  # type: Optional[popplerqt5.Poppler.TextBox]
+        for row in self._as_rows:
+            for tbox in iter_row(row):
+                if tbox.text() == "Lfs.:":
+                    number_next = True
+                elif number_next:
+                    delivery_number = tbox
+                    number_next = False
+                elif delivery_number:
+                    try:
+                        parsed_date = datetime.strptime(tbox.text(), "%d.%m.%Y").date()
+                    except ValueError:
+                        pass
+                    else:
+                        delivery_number.used = True
+                        tbox.used = True
+                        return (delivery_number.text(), parsed_date)
+
+        raise ValueError("cannot find delivery info")
+
+    def get_invoice_info(self) -> Tuple[str, date]:
+        invoice_number = None  # type: Optional[popplerqt5.Poppler.TextBox]
+        invoice_date = None  # type: Optional[popplerqt5.Poppler.TextBox]
+        parsed_date = None  # type: Optional[date]
+
+        rechnung = ["R", "E", "C", "H", "N", "U", "N", "G:"]
+        i = 0
+        date_next = False
+        for row in self._as_rows:
+            for tbox in iter_row(row):
+                if not invoice_number:
+                    if i == len(rechnung):
+                        invoice_number = tbox
+                    elif tbox.text() == rechnung[i]:
+                        i += 1
+                    else:
+                        i = int(tbox.text() == rechnung[0])
+
+                if not invoice_date:
+                    if date_next:
+                        try:
+                            parsed_date = datetime.strptime(
+                                tbox.text(), "%d.%m.%Y"
+                            ).date()
+                        except ValueError:
+                            pass
+                        else:
+                            invoice_date = tbox
+                    date_next = tbox.text() == "Rechnungsdatum:"
+
+                if invoice_number and invoice_date and parsed_date:
+                    invoice_number.used = True
+                    invoice_date.used = True
+                    return (invoice_number.text(), parsed_date)
+
+        raise ValueError("cannot find invoice info")
+
+    @staticmethod
+    def _format_columns(row: NewColumns) -> ParsedRow:
+        formatted = []  # type: List[str]
+        for tboxes in row:
+            s = ""
+            for tbox in tboxes:
+                while tbox:
+                    s += tbox.text()
+                    if tbox.hasSpaceAfter():
+                        s += " "
+                    tbox.used = True
+                    tbox = tbox.nextWord()
+            formatted.append(s)
+        amount = formatted[2].rsplit(maxsplit=1)
+        while len(amount) < 2:
+            amount.append("")
+        price = formatted[3].rsplit("/", 1)[0]
+        return (
+            formatted[0],
+            formatted[1],
+            "",
+            amount[0],
+            amount[1],
+            price,
+            formatted[4],
+        )
+
+    def parse_table(self) -> Iterator[ParsedRow]:
+        # find start of table
+        rows = iter(self._as_rows)
+        for row in rows:
+            if row_is_words(
+                row,
+                ["Artikel", "Menge", "Einheit", "Preis", "Wert", "EUR"],
+            ):
+                mark_row_as_used(row)
+                break
+        else:
+            return  # cannot find table header
+
+        # skip leading text
+        for row in rows:
+            if row_is_words(row, ["Verkauf"]):
+                mark_row_as_used(row)
+                break
+        else:
+            raise ValueError("cannot find end of leading text in table")
+
+        # collect rows of table
+        table = []  # type: List[List[popplerqt5.Poppler.TextBox]]
+        for row in rows:
+            if row_is_words(row, ["Leergutlieferung"]) or row_is_words(
+                row,
+                [
+                    "Leergutartikel",
+                    "Lieferung",
+                    "Rückgabe",
+                    "Differenz",
+                    "Pfand",
+                    "Wert",
+                ],
+            ):
+                mark_row_as_used(row)
+                break
+            table.append(row)
+
+        columns = guess_columns(table)
+        assert (
+            len(columns) == 5
+        ), f"expected table to have 5 columns, got {len(columns)}"
+
+        combined_row = ([], [], [], [], [])  # type: NewColumns
+        for row in table:
+            parsed_row = ([], [], [], [], [])  # type: NewColumns
+            for tbox in row:
+                bbox = tbox.boundingBox()
+                try:
+                    i = get_column(columns, bbox.left())
+                except ValueError:
+                    raise ValueError(
+                        "{repr(tbox.text())} ({repr(bbox)}) does not fit in the table"
+                    )
+                parsed_row[i].append(tbox)
+            if (
+                not parsed_row[0]
+                and not parsed_row[2]
+                and not parsed_row[3]
+                and not parsed_row[4]
+            ):
+                # add incomplete rows to the previous
+                combined_row[1].extend(parsed_row[1])
+            else:
+                if any(map(bool, combined_row)):
+                    yield self._format_columns(combined_row)
+                combined_row = parsed_row
+        if any(map(bool, combined_row)):
+            yield self._format_columns(combined_row)
+
+    def print_page(self, fileobj: TextIO) -> None:
+        print("NewInvoicePage.print_page() not yet implemented.", file=fileobj)
+
+
+class NewInvoice(Invoice):
+    @classmethod
+    def load(cls, name: str) -> "NewInvoice":
+        return cls(popplerqt5.Poppler.Document.load(name))
+
+    def __init__(self, doc: popplerqt5.Poppler.Document):
+        self.pages = [
+            NewInvoicePage(doc.page(i)) for i in range(len(doc))
+        ]  # type: List[InvoicePage]
+
+
 def csv_from_pdf(
     fileobj: TextIO,
     invoice: Invoice,
@@ -472,9 +858,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     with open_stdout() as stdout:
         first = True
         for name in args.invoice:
+            try:
+                invoice = MonospaceInvoice.load(name)  # type: Invoice
+            except AssertionError:
+                invoice = NewInvoice.load(name)
             csv_from_pdf(
                 stdout,
-                MonospaceInvoice.load(name),
+                invoice,
                 write_headers=first,
                 print_pages=args.verbose,
             )
