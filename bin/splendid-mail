@@ -56,7 +56,9 @@ def filter_by_sender(msg: Message) -> bool:
 
 
 def iter_pdfs(
-    mbox: imaplib.IMAP4, message_ids: List[str]
+    mbox: imaplib.IMAP4,
+    message_ids: List[str],
+    max_count: Optional[int] = None,
 ) -> Iterator[Tuple[Message, str, bytes]]:
     for message_id in message_ids:
         res, data = mbox.fetch(message_id, "(RFC822.HEADER)")
@@ -66,6 +68,11 @@ def iter_pdfs(
 
         if not filter_by_sender(msg):
             continue
+
+        if max_count is not None:
+            if max_count <= 0:
+                return
+            max_count -= 1
 
         res, data = mbox.fetch(message_id, "(RFC822)")
         assert res == "OK"
@@ -85,7 +92,11 @@ def iter_pdfs(
 
 
 def fetch_pdfs(
-    host: str, login: str, password: str, mailbox: Optional[str] = None
+    host: str,
+    login: str,
+    password: str,
+    mailbox: Optional[str] = None,
+    max_count: Optional[int] = None,
 ) -> Iterator[Tuple[Message, str, bytes]]:
     with imaplib.IMAP4_SSL(host) as mbox:
         mbox.login(login, password)
@@ -99,7 +110,7 @@ def fetch_pdfs(
         queue = Queue(2)  # type: Queue[Optional[Tuple[Message, str, bytes]]]
 
         def thread_proc() -> None:
-            for x in iter_pdfs(mbox, message_ids):
+            for x in iter_pdfs(mbox, message_ids, max_count):
                 queue.put(x)
             queue.put(None)
 
@@ -166,6 +177,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         action="store_true",
         help="Wait for user to press Enter after each PDF.",
     )
+    p.add_argument(
+        "-n", "--max-count", type=int, metavar="N", help="Stop after N messages."
+    )
     args = p.parse_args(argv)
 
     with open_stdout() as stdout:
@@ -175,6 +189,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             login=args.login,
             password=input() if args.password is None else args.password,
             mailbox=args.mailbox,
+            max_count=args.max_count,
         ):
             if not first:
                 print(file=sys.stderr)
