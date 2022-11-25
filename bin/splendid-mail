@@ -141,9 +141,11 @@ def fetch_pdfs(
         queue = Queue(2)  # type: Queue[Optional[Tuple[Message, str, bytes]]]
 
         def thread_proc() -> None:
-            for x in iter_pdfs(mbox, message_ids, max_count):
-                queue.put(x)
-            queue.put(None)
+            try:
+                for x in iter_pdfs(mbox, message_ids, max_count, after):
+                    queue.put(x)
+            finally:
+                queue.put(None)
 
         t = threading.Thread(target=thread_proc, daemon=True)
         t.start()
