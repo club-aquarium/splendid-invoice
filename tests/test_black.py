@@ -31,7 +31,7 @@ class Black(unittest.TestCase):
                 "--check",
                 "setup.py",
                 "splendid_invoice.py",
-                "bin",
+                "bin/splendid-mail",
                 "tests",
             ],
             cwd=directory,

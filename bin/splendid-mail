@@ -61,6 +61,7 @@ def iter_pdfs(
     for message_id in message_ids:
         res, data = mbox.fetch(message_id, "(RFC822.HEADER)")
         assert res == "OK"
+        assert isinstance(data[0], tuple) and isinstance(data[0][1], bytes)
         msg = email.message_from_bytes(data[0][1], policy=email.policy.default)
 
         if not filter_by_sender(msg):
@@ -68,6 +69,7 @@ def iter_pdfs(
 
         res, data = mbox.fetch(message_id, "(RFC822)")
         assert res == "OK"
+        assert isinstance(data[0], tuple) and isinstance(data[0][1], bytes)
         msg = email.message_from_bytes(data[0][1], policy=email.policy.default)
         for part in msg.walk():
             name = part.get_filename()
@@ -84,7 +86,7 @@ def iter_pdfs(
 
 def fetch_pdfs(
     host: str, login: str, password: str, mailbox: Optional[str] = None
-) -> Iterator[Tuple[Message, bytes]]:
+) -> Iterator[Tuple[Message, str, bytes]]:
     with imaplib.IMAP4_SSL(host) as mbox:
         mbox.login(login, password)
         if mailbox is not None:
@@ -94,7 +96,7 @@ def fetch_pdfs(
 
         message_ids = data[0].split()
 
-        queue = Queue(2)  # type: Queue[Optional[Tuple[Message, bytes]]]
+        queue = Queue(2)  # type: Queue[Optional[Tuple[Message, str, bytes]]]
 
         def thread_proc() -> None:
             for x in iter_pdfs(mbox, message_ids):

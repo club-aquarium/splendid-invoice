@@ -30,7 +30,12 @@ class Types(unittest.TestCase):
         try:
             main(
                 None,
-                args=["--exclude", "build", directory],
+                args=[
+                    "--exclude",
+                    "build",
+                    directory,
+                    os.path.join(directory, "bin", "splendid-mail"),
+                ],
                 stdout=sys.stdout,
                 stderr=sys.stderr,
             )
