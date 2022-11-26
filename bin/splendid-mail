@@ -211,6 +211,10 @@ def prepend_csv(name: str) -> Iterator[Tuple[bool, TextIO]]:
             out.write(line)
 
 
+def parse_datetime(dt: str) -> datetime:
+    return datetime.strptime(dt, "%Y-%m-%d %H:%M:%S%z")
+
+
 def git_get_author_time(path: str) -> Optional[datetime]:
     proc = subprocess.run(
         [
@@ -323,7 +327,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         action="store_true",
         help="Wait for user to press Enter after each PDF.",
     )
-    p.add_argument(
+    g = p.add_argument_group("selection arguments")
+    g.add_argument(
+        "--after",
+        type=parse_datetime,
+        help="Skip messages before AFTER. (format YYYY-MM-DD HH:MM:SS[+-]HH:MM)",
+    )
+    g.add_argument(
         "-n", "--max-count", type=int, metavar="N", help="Stop after N messages."
     )
     g = p.add_argument_group("git arguments")
@@ -340,9 +350,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     args = p.parse_args(argv)
 
-    after = None
+    after = args.after
     if args.git is not None:
-        after = git_get_author_time(args.git)
+        if after is None:
+            after = git_get_author_time(args.git)
         # TODO check if args.git is dirty
 
     first = True
