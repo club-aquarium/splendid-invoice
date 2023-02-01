@@ -796,7 +796,7 @@ class NewInvoicePage(InvoicePage):
                     i = get_column(columns, bbox.left())
                 except ValueError:
                     raise ValueError(
-                        "{repr(tbox.text())} ({repr(bbox)}) does not fit in the table"
+                        f"{repr(tbox.text())} ({repr(bbox)}) does not fit in the table"
                     )
                 parsed_row[i].append(tbox)
             if (
