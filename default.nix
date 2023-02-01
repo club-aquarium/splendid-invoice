@@ -20,6 +20,8 @@ buildPythonApplication {
     mypy
   ];
 
+  pythonImportsCheck = [ "splendid_invoice" ];
+
   meta = with lib; {
     description = "Parse PDF invoices from Splendid Drinks";
     license = licenses.gpl2Plus;

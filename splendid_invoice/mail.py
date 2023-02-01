@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 splendid-invoice
 Copyright (C) 2022  schnusch
@@ -39,7 +38,7 @@ from tempfile import NamedTemporaryFile
 from typing import Iterator, List, Optional, TextIO, Tuple, cast
 
 import popplerqt5  # type: ignore
-from splendid_invoice import (
+from .splendid import (
     Invoice,
     MonospaceInvoice,
     NewInvoice,

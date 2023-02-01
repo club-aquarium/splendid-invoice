@@ -1,6 +1,6 @@
 """
 splendid-invoice
-Copyright (C) 2022  schnusch
+Copyright (C) 2023  schnusch
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -17,28 +17,6 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 
-import os.path
-import sys
-import unittest
+from .splendid import main
 
-from mypy.main import main  # type: ignore
-
-
-class Types(unittest.TestCase):
-    def test_types(self) -> None:
-        directory = os.path.join(os.path.dirname(__file__), "..")
-        try:
-            main(
-                None,
-                args=[
-                    "--exclude",
-                    "build",
-                    directory,
-                ],
-                stdout=sys.stdout,
-                stderr=sys.stderr,
-            )
-            exit_code = 0
-        except SystemExit as system_exit:
-            exit_code = system_exit.code
-        self.assertEqual(exit_code, 0)
+main()
