@@ -38,6 +38,7 @@ from tempfile import NamedTemporaryFile
 from typing import Iterator, List, Optional, TextIO, Tuple, cast
 
 import popplerqt5  # type: ignore
+
 from .splendid import (
     Invoice,
     MonospaceInvoice,
