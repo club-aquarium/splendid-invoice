@@ -22,9 +22,9 @@ from datetime import date
 from typing import (
     Iterator,
     List,
+    Optional,
     TextIO,
     Tuple,
-    cast,
 )
 
 ParsedRow = Tuple[
@@ -38,9 +38,9 @@ ParsedRow = Tuple[
 ]
 
 PaddedRow = Tuple[
-    date,  # Leistungsdatum
+    Optional[date],  # Leistungsdatum
     str,  # Lieferschein
-    date,  # Rechnungsdatum
+    Optional[date],  # Rechnungsdatum
     str,  # Rechnungs-Nr.
     str,  # Artikel
     str,  # Bezeichnung
@@ -53,10 +53,10 @@ PaddedRow = Tuple[
 
 
 class InvoicePage:
-    def get_delivery_info(self) -> Tuple[str, date]:
+    def get_delivery_info(self) -> Tuple[str, Optional[date]]:
         raise NotImplementedError
 
-    def get_invoice_info(self) -> Tuple[str, date]:
+    def get_invoice_info(self) -> Tuple[str, Optional[date]]:
         raise NotImplementedError
 
     def parse_table(self) -> Iterator[ParsedRow]:
@@ -89,7 +89,7 @@ class Invoice:
 
     def __iter__(self) -> Iterator[PaddedRow]:
         delivery_id = ""
-        delivery_date = cast(date, "")
+        delivery_date = None
         for page in self.pages:
             try:
                 delivery_id, delivery_date = page.get_delivery_info()
@@ -99,7 +99,7 @@ class Invoice:
                 invoice_id, invoice_date = page.get_invoice_info()
             except (AttributeError, ValueError):
                 invoice_id = ""
-                invoice_date = cast(date, "")
+                invoice_date = None
             for row in page.parse_table():
                 padded_row = (
                     delivery_date,
