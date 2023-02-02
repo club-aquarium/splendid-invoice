@@ -1,6 +1,6 @@
 """
 splendid-invoice
-Copyright (C) 2022  schnusch
+Copyright (C) 2022-2023  schnusch
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -39,13 +39,16 @@ from typing import Iterator, List, Optional, TextIO, Tuple, cast
 
 import popplerqt5  # type: ignore
 
-from .splendid import (
-    Invoice,
-    MonospaceInvoice,
-    NewInvoice,
+from . import (
     csv_from_pdf,
     open_stdout,
 )
+from .base import Invoice
+from .splendid import (
+    MonospaceInvoice,
+    NewInvoice,
+)
+from .zugferd_1p0 import Zugferd1p0Invoice
 
 
 def filter_by_sender(msg: Message) -> bool:
@@ -56,7 +59,10 @@ def filter_by_sender(msg: Message) -> bool:
         assert isinstance(addr, str)
         senderaddr = addr
     return (
-        re.match(r".*@(getraenke-pfeifer\.de|splendid-drinks\.com)>?$", senderaddr)
+        re.match(
+            r".*@(getraenke-pfeifer\.de|splendid-drinks\.com|gustav-mueller\.de)>?$",
+            senderaddr,
+        )
         is not None
     )
 
@@ -371,9 +377,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         try:
             pdf = popplerqt5.Poppler.Document.loadFromData(pdfdata)
             try:
-                invoice = MonospaceInvoice(pdf)  # type: Invoice
+                invoice = Zugferd1p0Invoice(pdf)  # type: Invoice
             except AssertionError:
-                invoice = NewInvoice(pdf)
+                try:
+                    invoice = MonospaceInvoice(pdf)
+                except AssertionError:
+                    invoice = NewInvoice(pdf)
             if args.git is None:
                 context = wrapped_open_stdout(first)
             elif args.reverse:

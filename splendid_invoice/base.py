@@ -35,6 +35,7 @@ ParsedRow = Tuple[
     str,  # Menge
     str,  # Preis
     str,  # Betrag
+    str,  # Umsatzsteuer
 ]
 
 PaddedRow = Tuple[
@@ -49,6 +50,7 @@ PaddedRow = Tuple[
     str,  # Menge
     str,  # Preis
     str,  # Betrag
+    str,  # Umsatzsteuer
 ]
 
 
@@ -82,6 +84,7 @@ class Invoice:
         "Menge",
         "Preis",
         "Betrag",
+        "USt.",
     )
 
     def __init__(self) -> None:

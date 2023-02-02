@@ -17,18 +17,16 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 
-import argparse
 import bisect
-import csv
 import math
 import re
-import sys
 from dataclasses import dataclass
 from datetime import date, datetime
 from functools import cached_property
 from itertools import zip_longest
 from heapq import merge
 from typing import (
+    Any,
     Iterator,
     List,
     NamedTuple,
@@ -48,12 +46,6 @@ from .base import (
     InvoicePage,
     ParsedRow,
 )
-
-
-def open_stdout() -> TextIO:
-    return open(
-        sys.stdout.fileno(), "w", encoding="iso-8859-1", newline="", closefd=False
-    )
 
 
 def approx_gcd(a: Optional[float], b: float) -> float:
@@ -297,6 +289,8 @@ class MonospaceInvoicePage(InvoicePage, TextGrid):
                 box.used = True
             row.append(" ".join(texts))
         row[3:4] = self._split_count(row[3])
+        row.append("")
+        assert len(row) == len(cast(Any, ParsedRow).__args__)
         return cast(ParsedRow, tuple(row))
 
     def parse_table(self) -> Iterator[ParsedRow]:
@@ -660,6 +654,7 @@ class NewInvoicePage(InvoicePage):
             amount[1],
             price,
             formatted[4],
+            "",
         )
 
     def parse_table(self) -> Iterator[ParsedRow]:
@@ -743,49 +738,3 @@ class NewInvoice(Invoice):
         self.pages = [
             NewInvoicePage(doc.page(i)) for i in range(len(doc))
         ]  # type: List[InvoicePage]
-
-
-def csv_from_pdf(
-    fileobj: TextIO,
-    invoice: Invoice,
-    write_headers: bool = False,
-    print_pages: bool = False,
-) -> None:
-    out = csv.writer(fileobj, delimiter=";", quoting=csv.QUOTE_ALL)
-    if write_headers:
-        out.writerow(invoice.headers)
-    for row in invoice:
-        out.writerow(row)
-    if print_pages:
-        invoice.print_pages()
-
-
-def main(argv: Optional[List[str]] = None) -> None:
-    p = argparse.ArgumentParser(description="Parse PDF invoices from Splendid Drinks")
-    p.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Print parsed PDF to standard error.",
-    )
-    p.add_argument("invoice", nargs="+", metavar="<invoice>")
-    args = p.parse_args(argv)
-
-    with open_stdout() as stdout:
-        first = True
-        for name in args.invoice:
-            try:
-                invoice = MonospaceInvoice.load(name)  # type: Invoice
-            except AssertionError:
-                invoice = NewInvoice.load(name)
-            csv_from_pdf(
-                stdout,
-                invoice,
-                write_headers=first,
-                print_pages=args.verbose,
-            )
-            first = False
-
-
-if __name__ == "__main__":
-    main()
