@@ -18,27 +18,19 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 
 import os.path
-import sys
+import subprocess
 import unittest
-
-from mypy.main import main  # type: ignore
 
 
 class Types(unittest.TestCase):
     def test_types(self) -> None:
         directory = os.path.join(os.path.dirname(__file__), "..")
-        try:
-            main(
-                None,
-                args=[
-                    "--exclude",
-                    "build",
-                    directory,
-                ],
-                stdout=sys.stdout,
-                stderr=sys.stderr,
-            )
-            exit_code = 0
-        except SystemExit as system_exit:
-            exit_code = system_exit.code
-        self.assertEqual(exit_code, 0)
+        p = subprocess.run(
+            [
+                "mypy",
+                "--exclude",
+                "build",
+                directory,
+            ],
+        )
+        self.assertEqual(p.returncode, 0)
