@@ -671,12 +671,15 @@ class NewInvoicePage(InvoicePage):
             return  # cannot find table header
 
         # skip leading text
+        skipped_rows = []  # type: List[List[popplerqt5.Poppler.TextBox]]
         for row in rows:
             if row_is_words(row, ["Verkauf"]):
                 mark_row_as_used(row)
                 break
+            skipped_rows.append(row)
         else:
-            raise ValueError("cannot find end of leading text in table")
+            # cannot find end of leading text in table
+            rows = iter(skipped_rows)
 
         # collect rows of table
         table = []  # type: List[List[popplerqt5.Poppler.TextBox]]
