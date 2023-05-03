@@ -71,7 +71,6 @@ def main(argv: Optional[List[str]] = None) -> None:
             try:
                 invoice = Zugferd1p0Invoice.load(name)  # type: Invoice
             except AssertionError:
-                raise
                 try:
                     invoice = MonospaceInvoice.load(name)
                 except AssertionError:
