@@ -19,9 +19,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 import sys
 from datetime import date
+from typing import List  # noqa: F401
 from typing import (
     Iterator,
-    List,
     Optional,
     TextIO,
     Tuple,

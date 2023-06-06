@@ -43,7 +43,7 @@ from . import (
     csv_from_pdf,
     open_stdout,
 )
-from .base import Invoice
+from .base import Invoice  # noqa: F401
 from .splendid import (
     MonospaceInvoice,
     NewInvoice,
