@@ -43,6 +43,7 @@ from . import (
     csv_from_pdf,
     open_stdout,
 )
+from .base import DummyInvoice
 from .base import Invoice  # noqa: F401
 from .splendid import (
     MonospaceInvoice,
@@ -376,13 +377,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         print_mail_info(msg, pdfname)
         try:
             pdf = popplerqt5.Poppler.Document.loadFromData(pdfdata)
-            try:
-                invoice = Zugferd1p0Invoice(pdf)  # type: Invoice
-            except AssertionError:
+            invoice = DummyInvoice()  # type: Invoice
+            for cls in (Zugferd1p0Invoice, MonospaceInvoice, NewInvoice):
                 try:
-                    invoice = MonospaceInvoice(pdf)
-                except AssertionError:
-                    invoice = NewInvoice(pdf)
+                    invoice = cls(pdf)
+                except (AssertionError, ValueError):
+                    pass
             if args.git is None:
                 context = wrapped_open_stdout(first)
             elif args.reverse:

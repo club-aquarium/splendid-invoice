@@ -118,3 +118,8 @@ class Invoice:
         for page in self.pages:
             page.print_page(fileobj)
             print(file=fileobj)
+
+
+class DummyInvoice(Invoice):
+    def __iter__(self) -> Iterator[PaddedRow]:
+        return iter([])

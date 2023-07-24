@@ -22,7 +22,6 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
-from functools import cached_property
 from itertools import zip_longest
 from heapq import merge
 from typing import (
@@ -44,6 +43,7 @@ import popplerqt5  # type: ignore
 from .base import (
     Invoice,
     InvoicePage,
+    PaddedRow,
     ParsedRow,
 )
 
@@ -402,10 +402,13 @@ def only_starts_of_next_word_chains(
     return starts
 
 
-def guess_columns(table: List[List[popplerqt5.Poppler.TextBox]]) -> List[TableColumn]:
+Row = List[popplerqt5.Poppler.TextBox]
+
+
+def guess_columns(table: List[Row]) -> List[TableColumn]:
     """Find common horizontal whitespace in multiple rows of text. The
     common whitespace are our column separators of the table.
-    For the way this works using bisect look at NewInvoicePage._as_rows
+    For the way this works using bisect look at NewInvoice._as_rows
     """
     columns = []  # type: List[TableColumn]
     for row in table:
@@ -421,7 +424,7 @@ def guess_columns(table: List[List[popplerqt5.Poppler.TextBox]]) -> List[TableCo
                 right = max(right, bbox.right())
                 tbox = tbox.nextWord()
 
-            # see NewInvoicePage._as_rows
+            # see NewInvoice._as_rows
             i = bisect.bisect_left(columns, (left,))
             if i < len(columns) and columns[i].left <= right:
                 column = columns[i]
@@ -430,7 +433,7 @@ def guess_columns(table: List[List[popplerqt5.Poppler.TextBox]]) -> List[TableCo
                     left=min(column.left, left),
                 )
 
-                # multiple columns might overlap now, see NewInvoicePage._as_rows
+                # multiple columns might overlap now, see NewInvoice._as_rows
                 for j in reversed(range(0, i)):
                     a = columns[j]
                     b = columns[i]
@@ -470,42 +473,73 @@ def get_column(columns: List[TableColumn], x: float) -> int:
     raise ValueError(f"{x} does not fit in columns {columns}")
 
 
-def iter_row(
-    row: List[popplerqt5.Poppler.TextBox],
-) -> Iterator[popplerqt5.Poppler.TextBox]:
+def iter_row(row: Row) -> Iterator[popplerqt5.Poppler.TextBox]:
     for tbox in row:
         while tbox:
             yield tbox
             tbox = tbox.nextWord()
 
 
-def row_is_words(row: List[popplerqt5.Poppler.TextBox], words: List[str]) -> bool:
+def row_is_words(row: Row, words: List[str]) -> bool:
     for tbox, word in zip_longest(iter_row(row), words):
         if tbox is None or word is None or tbox.text() != word:
             return False
     return True
 
 
-def mark_row_as_used(row: List[popplerqt5.Poppler.TextBox]) -> None:
+def row_startswith_words(row: Row, words: List[str]) -> bool:
+    for tbox, word in zip_longest(iter_row(row), words):
+        if word is None:
+            break
+        elif tbox is None or tbox.text() != word:
+            return False
+    return True
+
+
+def mark_row_as_used(row: Row, nmax: int = -1) -> None:
     for tbox in iter_row(row):
+        if nmax > 0:
+            nmax -= 1
+        elif nmax == 0:
+            break
         tbox.used = True
 
 
+def is_end_of_delivery(row: Row) -> bool:
+    if row_startswith_words(row, ["Summe", "Lieferschein"]):
+        mark_row_as_used(row, 2)
+        return True
+    else:
+        return False
+
+
 NewColumns = Tuple[
-    List[popplerqt5.Poppler.TextBox],
-    List[popplerqt5.Poppler.TextBox],
-    List[popplerqt5.Poppler.TextBox],
-    List[popplerqt5.Poppler.TextBox],
-    List[popplerqt5.Poppler.TextBox],
+    Row,
+    Row,
+    Row,
+    Row,
+    Row,
 ]
 
 
-class NewInvoicePage(InvoicePage):
-    def __init__(self, page: popplerqt5.Poppler.Page):
-        self.text_boxes = only_starts_of_next_word_chains(page.textList())
+class NewInvoice(Invoice):
+    @classmethod
+    def load(cls, name: str) -> "NewInvoice":
+        return cls(popplerqt5.Poppler.Document.load(name))
 
-    @cached_property
-    def _as_rows(self) -> List[List[popplerqt5.Poppler.TextBox]]:
+    def __init__(self, doc: popplerqt5.Poppler.Document):
+        self._page_rows = []  # type: List[List[Row]]
+        for i in range(len(doc)):
+            page = doc.page(i)
+            self._page_rows.append(
+                self._as_rows(only_starts_of_next_word_chains(page.textList()))
+            )
+        self._invoice_id, self._invoice_date = self.get_invoice_info()
+        # expected to exist
+        self.pages = []  # type: List[InvoicePage]
+
+    @staticmethod
+    def _as_rows(text_boxes: Set[popplerqt5.Poppler.TextBox]) -> List[Row]:
         """Sort page content into rows of text. When a TextBox overlaps with
         an existing row it is added to it and the row's size is increased to fit
         all it's TextBoxes.
@@ -514,7 +548,7 @@ class NewInvoicePage(InvoicePage):
         are included when increasing a row's height.
         """
         rows = []  # type: List[RowOfTextBoxes]
-        for tbox in self.text_boxes:
+        for tbox in text_boxes:
             bbox = tbox.boundingBox()
 
             # To check if two intervals overlap we test if
@@ -570,25 +604,24 @@ class NewInvoicePage(InvoicePage):
 
         return [[tbox for _, _, tbox in row.boxes] for row in rows]
 
-    def get_delivery_info(self) -> Tuple[str, date]:
+    def _get_delivery_info(self, row: Row) -> Tuple[str, date]:
         number_next = False
         delivery_number = None  # type: Optional[popplerqt5.Poppler.TextBox]
-        for row in self._as_rows:
-            for tbox in iter_row(row):
-                if tbox.text() == "Lfs.:":
-                    number_next = True
-                elif number_next:
-                    delivery_number = tbox
-                    number_next = False
-                elif delivery_number:
-                    try:
-                        parsed_date = datetime.strptime(tbox.text(), "%d.%m.%Y").date()
-                    except ValueError:
-                        pass
-                    else:
-                        delivery_number.used = True
-                        tbox.used = True
-                        return (delivery_number.text(), parsed_date)
+        for tbox in iter_row(row):
+            if tbox.text() == "Lfs.:":
+                number_next = True
+            elif number_next:
+                delivery_number = tbox
+                number_next = False
+            elif delivery_number:
+                try:
+                    parsed_date = datetime.strptime(tbox.text(), "%d.%m.%Y").date()
+                except ValueError:
+                    pass
+                else:
+                    delivery_number.used = True
+                    tbox.used = True
+                    return (delivery_number.text(), parsed_date)
 
         raise ValueError("cannot find delivery info")
 
@@ -600,32 +633,33 @@ class NewInvoicePage(InvoicePage):
         rechnung = ["R", "E", "C", "H", "N", "U", "N", "G:"]
         i = 0
         date_next = False
-        for row in self._as_rows:
-            for tbox in iter_row(row):
-                if not invoice_number:
-                    if i == len(rechnung):
-                        invoice_number = tbox
-                    elif tbox.text() == rechnung[i]:
-                        i += 1
-                    else:
-                        i = int(tbox.text() == rechnung[0])
-
-                if not invoice_date:
-                    if date_next:
-                        try:
-                            parsed_date = datetime.strptime(
-                                tbox.text(), "%d.%m.%Y"
-                            ).date()
-                        except ValueError:
-                            pass
+        for page in self._page_rows:
+            for row in page:
+                for tbox in iter_row(row):
+                    if not invoice_number:
+                        if i == len(rechnung):
+                            invoice_number = tbox
+                        elif tbox.text() == rechnung[i]:
+                            i += 1
                         else:
-                            invoice_date = tbox
-                    date_next = tbox.text() == "Rechnungsdatum:"
+                            i = int(tbox.text() == rechnung[0])
 
-                if invoice_number and invoice_date and parsed_date:
-                    invoice_number.used = True
-                    invoice_date.used = True
-                    return (invoice_number.text(), parsed_date)
+                    if not invoice_date:
+                        if date_next:
+                            try:
+                                parsed_date = datetime.strptime(
+                                    tbox.text(), "%d.%m.%Y"
+                                ).date()
+                            except ValueError:
+                                pass
+                            else:
+                                invoice_date = tbox
+                        date_next = tbox.text() == "Rechnungsdatum:"
+
+                    if invoice_number and invoice_date and parsed_date:
+                        invoice_number.used = True
+                        invoice_date.used = True
+                        return (invoice_number.text(), parsed_date)
 
         raise ValueError("cannot find invoice info")
 
@@ -657,47 +691,124 @@ class NewInvoicePage(InvoicePage):
             "",
         )
 
-    def parse_table(self) -> Iterator[ParsedRow]:
-        # find start of table
-        rows = iter(self._as_rows)
+    def _pad_rows(
+        self,
+        rows: Iterator[ParsedRow],
+        delivery_date: Optional[date],
+        delivery_id: str,
+    ) -> Iterator[PaddedRow]:
         for row in rows:
-            if row_is_words(
-                row,
-                ["Artikel", "Menge", "Einheit", "Preis", "Wert", "EUR"],
-            ):
-                mark_row_as_used(row)
-                break
-        else:
-            return  # cannot find table header
+            yield (
+                delivery_date,
+                delivery_id,
+                self._invoice_date,
+                self._invoice_id,
+                *row,
+            )
 
-        # skip leading text
-        skipped_rows = []  # type: List[List[popplerqt5.Poppler.TextBox]]
-        for row in rows:
-            if row_is_words(row, ["Verkauf"]):
-                mark_row_as_used(row)
-                break
-            skipped_rows.append(row)
-        else:
-            # cannot find end of leading text in table
-            rows = iter(skipped_rows)
+    def __iter__(self) -> Iterator[PaddedRow]:
+        delivery_id = ""
+        delivery_date = None  # type: Optional[date]
+        for page in self._page_rows:
+            rows = iter(page)
 
+            for row in rows:
+                if row_is_words(
+                    row,
+                    ["Artikel", "Menge", "Einheit", "Preis", "Wert", "EUR"],
+                ):
+                    mark_row_as_used(row)
+                    break
+            else:
+                continue  # cannot find table header
+
+            # skip leading text
+            leergut = False
+            table_rows = []  # type: List[Row]
+            for row in rows:
+                # we skip everything leading up to "Verkauf"...
+                if row_is_words(row, ["Verkauf"]):
+                    mark_row_as_used(row)
+                    # "Verkauf" starts a new table, so we parse everything up
+                    # to the end of the Lieferschein.
+                    table_rows = []
+                    for row in rows:
+                        if is_end_of_delivery(row):
+                            break
+                        elif row_is_words(
+                            row,
+                            [
+                                "Leergutartikel",
+                                "Lieferung",
+                                "Rückgabe",
+                                "Differenz",
+                                "Pfand",
+                                "Wert",
+                            ],
+                        ):
+                            mark_row_as_used(row)
+                            leergut = True
+                            break
+                        table_rows.append(row)
+                    yield from self._pad_rows(
+                        self._parse_table(iter(table_rows)),
+                        delivery_date,
+                        delivery_id,
+                    )
+                    table_rows = []
+                # ...except when we find the end of a Lieferschein, then we process
+                # the skipped rows.
+                elif is_end_of_delivery(row):
+                    yield from self._pad_rows(
+                        self._parse_table(iter(table_rows)),
+                        delivery_date,
+                        delivery_id,
+                    )
+                    table_rows = []
+                # when Leergut starts we are done with the page
+                elif row_is_words(
+                    row,
+                    [
+                        "Leergutartikel",
+                        "Lieferung",
+                        "Rückgabe",
+                        "Differenz",
+                        "Pfand",
+                        "Wert",
+                    ],
+                ):
+                    mark_row_as_used(row)
+                    leergut = True
+                # The row might be part of a continued table, so we keep it for later.
+                else:
+                    table_rows.append(row)
+                    try:
+                        # extract delivery info from row
+                        delivery_id, delivery_date = self._get_delivery_info(row)
+                    except ValueError:
+                        pass
+
+                if leergut:
+                    rows = iter(table_rows)
+                    break
+
+            yield from self._pad_rows(
+                self._parse_table(rows),
+                delivery_date,
+                delivery_id,
+            )
+
+    def _parse_table(self, rows: Iterator[Row]) -> Iterator[ParsedRow]:
         # collect rows of table
-        table = []  # type: List[List[popplerqt5.Poppler.TextBox]]
+        table = []  # type: List[Row]
         for row in rows:
-            if row_is_words(row, ["Leergutlieferung"]) or row_is_words(
-                row,
-                [
-                    "Leergutartikel",
-                    "Lieferung",
-                    "Rückgabe",
-                    "Differenz",
-                    "Pfand",
-                    "Wert",
-                ],
-            ):
+            if row_is_words(row, ["Leergutlieferung"]):
                 mark_row_as_used(row)
                 break
             table.append(row)
+
+        if not table:
+            return
 
         columns = guess_columns(table)
         assert (
@@ -730,14 +841,3 @@ class NewInvoicePage(InvoicePage):
                 combined_row = parsed_row
         if any(map(bool, combined_row)):
             yield self._format_columns(combined_row)
-
-
-class NewInvoice(Invoice):
-    @classmethod
-    def load(cls, name: str) -> "NewInvoice":
-        return cls(popplerqt5.Poppler.Document.load(name))
-
-    def __init__(self, doc: popplerqt5.Poppler.Document):
-        self.pages = [
-            NewInvoicePage(doc.page(i)) for i in range(len(doc))
-        ]  # type: List[InvoicePage]
