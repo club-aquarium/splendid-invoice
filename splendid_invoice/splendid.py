@@ -35,6 +35,7 @@ from typing import (
     Tuple,
     Type,
     TypeVar,
+    Union,
     cast,
 )
 
@@ -515,7 +516,7 @@ def is_end_of_delivery(row: Row) -> bool:
 
 NewColumns = Tuple[
     Row,
-    Row,
+    List[Union[popplerqt5.Poppler.TextBox, str]],
     Row,
     Row,
     Row,
@@ -669,12 +670,15 @@ class NewInvoice(Invoice):
         for tboxes in row:
             s = ""
             for tbox in tboxes:
-                while tbox:
-                    s += tbox.text()
-                    if tbox.hasSpaceAfter():
-                        s += " "
-                    tbox.used = True
-                    tbox = tbox.nextWord()
+                if isinstance(tbox, str):
+                    s += tbox
+                else:
+                    while tbox:
+                        s += tbox.text()
+                        if tbox.hasSpaceAfter():
+                            s += " "
+                        tbox.used = True
+                        tbox = tbox.nextWord()
             formatted.append(s)
         amount = formatted[2].rsplit(maxsplit=1)
         while len(amount) < 2:
@@ -834,6 +838,7 @@ class NewInvoice(Invoice):
                 and not parsed_row[4]
             ):
                 # add incomplete rows to the previous
+                combined_row[1].append(" ")
                 combined_row[1].extend(parsed_row[1])
             else:
                 if any(map(bool, combined_row)):
