@@ -35,7 +35,7 @@ from email.message import Message
 from email.utils import mktime_tz, parsedate_tz
 from queue import Queue
 from tempfile import NamedTemporaryFile
-from typing import Iterator, List, Optional, TextIO, Tuple, cast
+from typing import BinaryIO, Iterator, List, Optional, TextIO, Tuple, cast
 
 import popplerqt5  # type: ignore
 
@@ -168,11 +168,11 @@ def wrapped_open_stdout(first: bool) -> Iterator[Tuple[bool, TextIO]]:
         yield (first, stdout)
 
 
-def open_noexist(name: str) -> TextIO:
+def open_noexist(name: str) -> BinaryIO:
     try:
-        return open(name, "r", encoding="iso-8859-1", newline="")
+        return open(name, "rb")
     except FileNotFoundError:
-        return open(os.path.devnull, "r")
+        return open(os.path.devnull, "rb")
 
 
 @contextmanager
@@ -180,7 +180,7 @@ def renamed_tempfile(dest: str) -> Iterator[TextIO]:
     with NamedTemporaryFile(
         dir=os.path.dirname(dest) or os.path.curdir,
         mode="w",
-        encoding="iso-8859-1",
+        encoding="utf-8",
         newline="",
     ) as tmp:
         yield cast(TextIO, tmp)
@@ -188,10 +188,27 @@ def renamed_tempfile(dest: str) -> Iterator[TextIO]:
         tmp._closer.delete = False
 
 
+def try_decode_utf8(b: bytes) -> str:
+    try:
+        return b.decode("utf-8")
+    except UnicodeDecodeError:
+        return b.decode("iso-8859-1")
+
+
+def decode_lines(it: Iterator[bytes]) -> Iterator[str]:
+    for bline in it:
+        # Behave like TextIOWrapper's newline="". We know there will be no
+        # b"\n" in the line, except at the end. The very last line may not even
+        # have that b"\n". So we split after every b"\r", that is not followed
+        # by a b"\n" or EOF.
+        for line in re.split(rb"(?<=\r)(?!\n|$)", bline):
+            yield try_decode_utf8(line)
+
+
 @contextmanager
 def append_csv(name: str) -> Iterator[Tuple[bool, TextIO]]:
     with open_noexist(name) as inp, renamed_tempfile(name) as out:
-        lines = iter(inp)
+        lines = decode_lines(iter(inp))
         # prepend old lines
         empty = True
         for line in lines:
@@ -204,7 +221,7 @@ def append_csv(name: str) -> Iterator[Tuple[bool, TextIO]]:
 @contextmanager
 def prepend_csv(name: str) -> Iterator[Tuple[bool, TextIO]]:
     with open_noexist(name) as inp, renamed_tempfile(name) as out:
-        lines = iter(inp)
+        lines = decode_lines(iter(inp))
         # skip header
         reader = csv.reader(lines, delimiter=";")
         try:

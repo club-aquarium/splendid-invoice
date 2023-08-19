@@ -32,9 +32,7 @@ from .zugferd_1p0 import Zugferd1p0Invoice
 
 
 def open_stdout() -> TextIO:
-    return open(
-        sys.stdout.fileno(), "w", encoding="iso-8859-1", newline="", closefd=False
-    )
+    return open(sys.stdout.fileno(), "w", encoding="utf-8", newline="", closefd=False)
 
 
 def csv_from_pdf(
