@@ -66,6 +66,15 @@ def approx_gcd(a: Optional[float], b: float) -> float:
     return (a / adiv + b / bdiv) / 2
 
 
+U = TypeVar("U")
+
+
+def last(it: Iterator[U], default: Optional[U] = None) -> Optional[U]:
+    for default in it:
+        pass
+    return default
+
+
 @dataclass
 class GridSpace:
     y: int
@@ -522,6 +531,32 @@ NewColumns = Tuple[
     Row,
 ]
 
+# we use the look-behind as well as the \b at the beginning to match these as well:
+# "Bulmers Original Cid.EW12x0,50"
+# "Kolle Mate Bio20x0,50"
+# "Quartiermeister Pils Bio20x0,50"
+size_regex = re.compile(r"(?:\b|(?<=\bBio)|(?<=\bEW))((?:\d+x)*\d+(?:,\d+)?)l?\b")
+
+
+def extract_size(name: str) -> Tuple[str, str]:
+    # re.search will return the first match, but we want the last
+    m = last(size_regex.finditer(name))
+    if m is None:
+        return (name, "")
+    i, j = m.span()
+    size = m[1]
+    suffix = name[j:].lstrip(" ")
+    if suffix.startswith("EUR") or suffix.startswith("%"):
+        return (name, "")
+    elif i == 0:
+        return (suffix, size)
+    else:
+        prefix = name[:i].rstrip(" ")
+        if j == len(name):
+            return (prefix, size)
+        else:
+            return (prefix + " " + suffix, size)
+
 
 class NewInvoice(Invoice):
     @classmethod
@@ -680,14 +715,19 @@ class NewInvoice(Invoice):
                         tbox.used = True
                         tbox = tbox.nextWord()
             formatted.append(s)
+
         amount = formatted[2].rsplit(maxsplit=1)
         while len(amount) < 2:
             amount.append("")
+
         price = formatted[3].rsplit("/", 1)[0]
+
+        name, size = extract_size(formatted[1])
+
         return (
             formatted[0],
-            formatted[1],
-            "",
+            name,
+            size,
             amount[0],
             amount[1],
             price,
