@@ -167,7 +167,7 @@ def parse_line_item(
     )
 
     net_elem = elem.find(
-        "ram:SpecifiedSupplyChainTradeAgreement/ram:NetPriceProductTradePrice",
+        "ram:SpecifiedSupplyChainTradeAgreement/ram:GrossPriceProductTradePrice",
         namespaces,
     )
     net_price, _ = try_get(net_elem, "ram:ChargeAmount", parse_price, ("", ""))
