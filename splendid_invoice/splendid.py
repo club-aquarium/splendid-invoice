@@ -412,6 +412,20 @@ def only_starts_of_next_word_chains(
     return starts
 
 
+def get_word_chain_right_left(tbox: popplerqt5.Poppler.TextBox) -> TableColumn:
+    # get dimensions of the next-word-chain
+    bbox = tbox.boundingBox()
+    left = bbox.left()
+    right = bbox.right()
+    tbox = tbox.nextWord()
+    while tbox:
+        bbox = tbox.boundingBox()
+        left = min(left, bbox.left())
+        right = max(right, bbox.right())
+        tbox = tbox.nextWord()
+    return TableColumn(right, left)
+
+
 Row = List[popplerqt5.Poppler.TextBox]
 
 
@@ -424,15 +438,7 @@ def guess_columns(table: List[Row]) -> List[TableColumn]:
     for row in table:
         for tbox in row:
             # get dimensions of the next-word-chain
-            bbox = tbox.boundingBox()
-            left = bbox.left()
-            right = bbox.right()
-            tbox = tbox.nextWord()
-            while tbox:
-                bbox = tbox.boundingBox()
-                left = min(left, bbox.left())
-                right = max(right, bbox.right())
-                tbox = tbox.nextWord()
+            right, left = get_word_chain_right_left(tbox)
 
             # see NewInvoice._as_rows
             i = bisect.bisect_left(columns, (left,))
@@ -475,12 +481,12 @@ def guess_columns(table: List[Row]) -> List[TableColumn]:
     return columns
 
 
-def get_column(columns: List[TableColumn], x: float) -> int:
+def get_column(columns: List[TableColumn], left: float, right: float) -> int:
     """Get index of column x fits into."""
-    i = bisect.bisect_left(columns, (x,))
-    if i < len(columns) and columns[i].left <= x:
+    i = bisect.bisect_left(columns, (left,))
+    if i < len(columns) and columns[i].left <= left and right <= columns[i].right:
         return i
-    raise ValueError(f"{x} does not fit in columns {columns}")
+    raise ValueError(f"{left} does not fit in columns {columns}")
 
 
 def iter_row(row: Row) -> Iterator[popplerqt5.Poppler.TextBox]:
@@ -863,12 +869,12 @@ class NewInvoice(Invoice):
         for row in table:
             parsed_row = ([], [], [], [], [])  # type: NewColumns
             for tbox in row:
-                bbox = tbox.boundingBox()
+                right, left = get_word_chain_right_left(tbox)
                 try:
-                    i = get_column(columns, bbox.left())
+                    i = get_column(columns, left, right)
                 except ValueError:
                     raise ValueError(
-                        f"{repr(tbox.text())} ({repr(bbox)}) does not fit in the table"
+                        f"{repr(tbox.text())} ({(left, right)}) does not fit in the table"
                     )
                 parsed_row[i].append(tbox)
             if (
