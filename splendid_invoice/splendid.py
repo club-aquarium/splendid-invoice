@@ -434,8 +434,16 @@ def guess_columns(table: List[Row]) -> List[TableColumn]:
     common whitespace are our column separators of the table.
     For the way this works using bisect look at NewInvoice._as_rows
     """
+    todo = []  # type: List[Row]
     columns = []  # type: List[TableColumn]
     for row in table:
+        # We expect our table to have at least 5 columns. If we find less than
+        # 5 next-word-chains, we ignore our them for now and try to fit them
+        # in the columns later.
+        if len(row) < 5:
+            todo.append(row)
+            continue
+
         for tbox in row:
             # get dimensions of the next-word-chain
             right, left = get_word_chain_right_left(tbox)
@@ -477,6 +485,25 @@ def guess_columns(table: List[Row]) -> List[TableColumn]:
             else:
                 columns.insert(i, TableColumn(right=right, left=left))
             assert columns[i].left < columns[i].right
+
+    # fit skipped rows into columns
+    for row in todo:
+        for tbox in row:
+            right, left = get_word_chain_right_left(tbox)
+            # it will now span from columns[i] to columns[j - 1] (including)
+            i = 0
+            while i < len(columns) and columns[i].right < left:
+                i += 1
+            j = i
+            while j < len(columns) and right >= columns[j].left:
+                j += 1
+
+            # we ignore text that spans multiple columns
+            if i - j == 1 and i < len(columns):
+                columns[i] = TableColumn(
+                    right=max(columns[i].right, right),
+                    left=min(columns[i].left, left),
+                )
 
     return columns
 
