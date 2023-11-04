@@ -803,8 +803,12 @@ class NewInvoice(Invoice):
             leergut = False
             table_rows = []  # type: List[Row]
             for row in rows:
-                # we skip everything leading up to "Verkauf"...
-                if row_is_words(row, ["Verkauf"]):
+                # we skip everything leading up to first interesting header...
+                if (
+                    row_is_words(row, ["Verkauf"])
+                    or row_is_words(row, ["Gratis"])
+                    or row_is_words(row, ["Rückware"])
+                ):
                     mark_row_as_used(row)
                     # "Verkauf" starts a new table, so we parse everything up
                     # to the end of the Lieferschein.
@@ -879,9 +883,15 @@ class NewInvoice(Invoice):
         # collect rows of table
         table = []  # type: List[Row]
         for row in rows:
-            if row_is_words(row, ["Leergutlieferung"]):
+            if (
+                row_is_words(row, ["Verkauf"])
+                or row_is_words(row, ["Leergutlieferung"])
+                or row_is_words(row, ["Gratis"])
+                or row_is_words(row, ["Rückware"])
+                or row_startswith_words(row, ["Alternativ"])
+            ):
                 mark_row_as_used(row)
-                break
+                continue
             table.append(row)
 
         if not table:
