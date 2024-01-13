@@ -1,0 +1,3 @@
+[submodule "splendid-invoice-tests-splendid"]
+	path = tests/splendid
+	url = git@git.club-aquarium.de:gastro/splendid-invoice-tests-splendid.git
