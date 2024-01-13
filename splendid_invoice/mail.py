@@ -122,10 +122,14 @@ def iter_pdfs(
                 and part.get("Content-Disposition") is not None
                 and (
                     part.get_content_type() == "application/pdf"
-                    or name.endswith(".pdf")
+                    or (name is not None and name.endswith(".pdf"))
                 )
             ):
-                yield (msg, name, part.get_payload(decode=True))
+                if name is None:
+                    name = "attachment.pdf"
+                payload = part.get_payload(decode=True)
+                assert isinstance(payload, bytes)
+                yield (msg, name, payload)
 
 
 def fetch_pdfs(
