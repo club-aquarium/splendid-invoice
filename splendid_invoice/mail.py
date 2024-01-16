@@ -396,6 +396,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         if not first:
             print(file=sys.stderr)
         print_mail_info(msg, pdfname)
+        pdf = None  # type: Optional[popplerqt5.Poppler.Document]
         try:
             pdf = popplerqt5.Poppler.Document.loadFromData(pdfdata)
             invoice = DummyInvoice()  # type: Invoice
@@ -416,8 +417,16 @@ def main(argv: Optional[List[str]] = None) -> None:
             with NamedTemporaryFile(
                 "wb", prefix="splendid-invoice.", suffix=".pdf", delete=False
             ) as fp:
-                fp.write(pdfdata)
-                fp.flush()
+                if pdf is None:
+                    fp.write(pdfdata)
+                    fp.flush()
+                else:
+                    conv = pdf.pdfConverter()
+                    conv.setOutputFileName(fp.name)
+                    conv.setPDFOptions(
+                        popplerqt5.Poppler.PDFConverter.PDFOption.WithChanges
+                    )
+                    assert conv.convert()
                 print(
                     f"Cannot parse PDF file, written to {fp.name} for inspection.",
                     file=sys.stderr,

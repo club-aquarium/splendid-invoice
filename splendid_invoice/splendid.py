@@ -19,15 +19,21 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 import bisect
 import math
+import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
-from itertools import zip_longest
+from functools import partial
 from heapq import merge
+from itertools import islice, zip_longest
+from typing import Mapping  # noqa: F401
 from typing import (
     Any,
+    Callable,
     Iterator,
     List,
+    Literal,
     NamedTuple,
     Optional,
     Set,
@@ -40,6 +46,8 @@ from typing import (
 )
 
 import popplerqt5  # type: ignore
+from PyQt5.QtCore import QRectF, QSizeF  # type: ignore
+from PyQt5.QtGui import QColor  # type: ignore
 
 from .base import (
     Invoice,
@@ -198,6 +206,9 @@ class TextGrid:
         return "\n".join("".join(map(self._color_used_char, row)) for row in chars)
 
 
+DeliveryInfo = Tuple[str, date]
+
+
 class MonospaceInvoicePage(InvoicePage, TextGrid):
     columns = [
         (0, 10),
@@ -240,7 +251,7 @@ class MonospaceInvoicePage(InvoicePage, TextGrid):
                 return box
         raise ValueError(f"cannot find {repr(text)}")
 
-    def get_delivery_info(self) -> Tuple[str, date]:
+    def get_delivery_info(self) -> DeliveryInfo:
         id = self._find_text("Lieferschein").nextWord()
         date = self._find_text("Leistungsdatum").nextWord()
         id.used = True
@@ -383,6 +394,8 @@ class TableColumn(NamedTuple):
     # having the greater value first allows us to use bisect
     right: float
     left: float
+    top: float
+    bottom: float
 
 
 def join_rows(a: RowOfTextBoxes, b: RowOfTextBoxes) -> RowOfTextBoxes:
@@ -412,98 +425,112 @@ def only_starts_of_next_word_chains(
     return starts
 
 
-def get_word_chain_right_left(tbox: popplerqt5.Poppler.TextBox) -> TableColumn:
+def union_table_columns(a: TableColumn, b: TableColumn) -> TableColumn:
+    return TableColumn(
+        left=min(a.left, b.left),
+        top=min(a.top, b.top),
+        right=max(a.right, b.right),
+        bottom=max(a.bottom, b.bottom),
+    )
+
+
+def get_word_chain_dimensions(tbox: popplerqt5.Poppler.TextBox) -> TableColumn:
     # get dimensions of the next-word-chain
-    bbox = tbox.boundingBox()
-    left = bbox.left()
-    right = bbox.right()
-    tbox = tbox.nextWord()
+    dim = TableColumn(
+        left=math.inf,
+        top=math.inf,
+        right=-math.inf,
+        bottom=-math.inf,
+    )
     while tbox:
         bbox = tbox.boundingBox()
-        left = min(left, bbox.left())
-        right = max(right, bbox.right())
+        dim = union_table_columns(
+            dim,
+            TableColumn(
+                left=bbox.left(),
+                top=bbox.top(),
+                right=bbox.right(),
+                bottom=bbox.bottom(),
+            ),
+        )
         tbox = tbox.nextWord()
-    return TableColumn(right, left)
+    assert not math.isinf(dim.left)
+    return dim
 
 
 Row = List[popplerqt5.Poppler.TextBox]
 
 
-def guess_columns(table: List[Row]) -> List[TableColumn]:
+def guess_columns(
+    table: List[Row],
+    page: Optional[popplerqt5.Poppler.Page] = None,
+) -> List[TableColumn]:
     """Find common horizontal whitespace in multiple rows of text. The
     common whitespace are our column separators of the table.
     For the way this works using bisect look at NewInvoice._as_rows
     """
-    todo = []  # type: List[Row]
     columns = []  # type: List[TableColumn]
     for row in table:
         # We expect our table to have at least 5 columns. If we find less than
-        # 5 next-word-chains, we ignore our them for now and try to fit them
-        # in the columns later.
-        if len(row) < 5:
-            todo.append(row)
-            continue
+        # 5 next-word-chains, we treat the row as suspicious and ignore it, if
+        # it would cause us to union columns together.
+        suspicious = len(row) != 5
 
         for tbox in row:
             # get dimensions of the next-word-chain
-            right, left = get_word_chain_right_left(tbox)
+            dim = get_word_chain_dimensions(tbox)
 
             # see NewInvoice._as_rows
-            i = bisect.bisect_left(columns, (left,))
-            if i < len(columns) and columns[i].left <= right:
-                column = columns[i]
-                columns[i] = TableColumn(
-                    right=max(column.right, right),
-                    left=min(column.left, left),
-                )
+            i = bisect.bisect_left(columns, (dim.left,))
+            if i < len(columns) and columns[i].left <= dim.right:
+                old_column = columns[i]
+                columns[i] = union_table_columns(old_column, dim)
 
-                # multiple columns might overlap now, see NewInvoice._as_rows
-                for j in reversed(range(0, i)):
-                    a = columns[j]
-                    b = columns[i]
-                    if a.left <= b.right and b.left <= a.right:
-                        columns[j] = TableColumn(
-                            right=max(a.right, b.right),
-                            left=min(a.left, b.left),
-                        )
-                        columns.pop(i)
-                        i -= 1
-                    else:
-                        break
-                j = i + 1
-                while j < len(columns):
-                    a = columns[i]
-                    b = columns[j]
-                    if a.left <= b.right and b.left <= a.right:
-                        columns[i] = TableColumn(
-                            right=max(a.right, b.right),
-                            left=min(a.left, b.left),
-                        )
-                        columns.pop(j)
-                    else:
-                        break
-            else:
-                columns.insert(i, TableColumn(right=right, left=left))
+                class DoNotUnion(Exception):
+                    pass
+
+                try:
+                    # multiple columns might overlap now, see NewInvoice._as_rows
+                    for j in reversed(range(0, i)):
+                        a = columns[j]
+                        b = columns[i]
+                        if a.left <= b.right and b.left <= a.right:
+                            if suspicious:
+                                # Do not allow unions caused by suspicious rows.
+                                raise DoNotUnion
+                            else:
+                                columns[j] = union_table_columns(a, b)
+                                columns.pop(i)
+                                i -= 1
+                        else:
+                            break
+                    j = i + 1
+                    while j < len(columns):
+                        a = columns[i]
+                        b = columns[j]
+                        if a.left <= b.right and b.left <= a.right:
+                            if suspicious:
+                                # Do not allow unions caused by suspicious rows.
+                                raise DoNotUnion
+                            else:
+                                columns[i] = union_table_columns(a, b)
+                                columns.pop(j)
+                        else:
+                            break
+                except DoNotUnion:
+                    columns[i] = old_column
+            elif not suspicious:
+                columns.insert(i, dim)
             assert columns[i].left < columns[i].right
 
-    # fit skipped rows into columns
-    for row in todo:
-        for tbox in row:
-            right, left = get_word_chain_right_left(tbox)
-            # it will now span from columns[i] to columns[j - 1] (including)
-            i = 0
-            while i < len(columns) and columns[i].right < left:
-                i += 1
-            j = i
-            while j < len(columns) and right >= columns[j].left:
-                j += 1
-
-            # we ignore text that spans multiple columns
-            if i - j == 1 and i < len(columns):
-                columns[i] = TableColumn(
-                    right=max(columns[i].right, right),
-                    left=min(columns[i].left, left),
-                )
+    for i, c in enumerate(columns):
+        add_annotation(
+            page,
+            (c.left, c.top),
+            (c.right, c.bottom),
+            f"guess_columns: {i}",
+            color_env="SPLENDID_INVOICE_ANNOTATION_COLOR_COLUMN",
+        )
 
     return columns
 
@@ -539,21 +566,363 @@ def row_startswith_words(row: Row, words: List[str]) -> bool:
     return True
 
 
-def mark_row_as_used(row: Row, nmax: int = -1) -> None:
-    for tbox in iter_row(row):
-        if nmax > 0:
-            nmax -= 1
-        elif nmax == 0:
-            break
-        tbox.used = True
+def page_relative_qrectf(
+    rect: QRectF,
+    page_size: QSizeF,
+) -> QRectF:
+    """Annotations coordinates are relative to the page size, ((0,0) is top-left,
+    (1,1) is bottom-right) see https://poppler.freedesktop.org/api/qt5/classPoppler_1_1Annotation.html#annotCreation
+    """
+    w = page_size.width()
+    h = page_size.height()
+    return QRectF(
+        rect.left() / w,
+        rect.top() / h,
+        rect.width() / w,
+        rect.height() / h,
+    )
 
 
-def is_end_of_delivery(row: Row) -> bool:
-    if row_startswith_words(row, ["Summe", "Lieferschein"]):
-        mark_row_as_used(row, 2)
-        return True
+RGBaColor = Tuple[int, int, int, int]
+
+
+def parse_hex_rgba(
+    rgba: str,
+    fallback: Optional[RGBaColor] = None,
+) -> RGBaColor:
+    if not re.match(r"^#[0-9A-Fa-f]{8}$", rgba):
+        if fallback is None:
+            raise ValueError(f"cannot parse {rgba!r}")
+        else:
+            return fallback
+    i = int(rgba[1:], 16)
+    return (
+        (i & 0xFF000000) >> 24,
+        (i & 0x00FF0000) >> 16,
+        (i & 0x0000FF00) >> 8,
+        (i & 0x000000FF),
+    )
+
+
+AnnotationColorName = Literal[
+    "SPLENDID_INVOICE_ANNOTATION_COLOR_COLUMN",
+    "SPLENDID_INVOICE_ANNOTATION_COLOR_DEFAULT",
+    "SPLENDID_INVOICE_ANNOTATION_COLOR_ORIENTATION",
+    "SPLENDID_INVOICE_ANNOTATION_COLOR_USED",
+]
+default_annotation_colors = {
+    "SPLENDID_INVOICE_ANNOTATION_COLOR_COLUMN": (255, 0, 255, 63),
+    "SPLENDID_INVOICE_ANNOTATION_COLOR_DEFAULT": (255, 255, 0, 127),
+    "SPLENDID_INVOICE_ANNOTATION_COLOR_ORIENTATION": (0, 255, 255, 127),
+    "SPLENDID_INVOICE_ANNOTATION_COLOR_USED": (0, 255, 0, 127),
+}  # type: Mapping[AnnotationColorName, RGBaColor]
+
+
+def get_color_env(var: AnnotationColorName) -> RGBaColor:
+    return parse_hex_rgba(
+        os.environ.get(var, ""),
+        fallback=default_annotation_colors[var],
+    )
+
+
+def add_annotation(
+    page: popplerqt5.Poppler.Page,
+    topleft: Tuple[float, float],
+    bottomright: Tuple[float, float],
+    content: str,
+    *,
+    color_env: AnnotationColorName = "SPLENDID_INVOICE_ANNOTATION_COLOR_DEFAULT",
+) -> None:
+    x1, y1 = topleft
+    x2, y2 = bottomright
+    rect = page_relative_qrectf(
+        QRectF(x1, y1, (x2 - x1), (y2 - y1)),
+        page.pageSizeF(),
+    )
+    r, g, b, alpha = get_color_env(color_env)
+    color = QColor.fromRgb(r, g, b)
+    annot = popplerqt5.Poppler.GeomAnnotation()
+    annot.setContents(content)
+    annot.setBoundary(rect)
+    annot.setGeomInnerColor(color)
+    style = annot.style()
+    style.setColor(color)  # TODO remove border
+    style.setOpacity(alpha / 255)
+    annot.setStyle(style)
+    page.addAnnotation(annot)
+
+
+def create_annotate_tbox_funcs(
+    page: popplerqt5.Poppler.Page,
+    tboxes: Iterable[popplerqt5.Poppler.TextBox],
+    color: AnnotationColorName,
+    prefix: Optional[str] = None,
+) -> List[Callable[[], None]]:
+    annotations = []  # type: List[Callable[[], None]]
+
+    for tbox in tboxes:
+        if page is not None:
+            bbox = tbox.boundingBox()
+            annotations.append(
+                partial(
+                    add_annotation,
+                    page,
+                    (bbox.left(), bbox.top()),
+                    (bbox.right(), bbox.bottom()),
+                    ("" if prefix is None else prefix + ": ") + tbox.text(),
+                    color_env=color,
+                )
+            )
+
+    return annotations
+
+
+def mark_row_as_used(
+    row: Row,
+    *,
+    nmax: Optional[int] = None,
+    page: Optional[popplerqt5.Poppler.Page] = None,
+    prefix: Optional[str] = None,
+    orientation: bool = False,
+) -> List[Callable[[], None]]:
+    if page is None:
+        return []
     else:
+        return create_annotate_tbox_funcs(
+            page,
+            islice(iter_row(row), nmax),
+            color="SPLENDID_INVOICE_ANNOTATION_COLOR_ORIENTATION"
+            if orientation
+            else "SPLENDID_INVOICE_ANNOTATION_COLOR_USED",
+            prefix=prefix,
+        )
+
+
+class QueuedAnnotations(object):
+    """Annotations are stacked in the order they are added. This class allows
+    us to delay the call to page.addAnnotation(). We want guess_columns() to
+    draw its annotations first and then other annotations on top.
+    """
+
+    def __init__(self) -> None:
+        self._annotations = []  # type: List[Callable[[], None]]
+
+    def enqueue_annotation(
+        self,
+        row: Row,
+        *,
+        nmax: Optional[int] = None,
+        page: Optional[popplerqt5.Poppler.Page] = None,
+        prefix: Optional[str] = None,
+        orientation: bool = False,
+    ) -> None:
+        self._annotations.extend(
+            mark_row_as_used(
+                row,
+                nmax=nmax,
+                page=page,
+                prefix=prefix,
+                orientation=orientation,
+            )
+        )
+
+    def add_annotations(self) -> None:
+        i = None  # type: Optional[int]
+        try:
+            for i, annotate in enumerate(self._annotations):
+                annotate()
+        finally:
+            if i is not None:
+                self._annotations = self._annotations[i:]
+
+
+class TableExtractor(QueuedAnnotations):
+    def __init__(self) -> None:
+        super().__init__()
+        self._delivery = None  # type: Optional[DeliveryInfo]
+        self._subheading = None  # type: Optional[str]
+
+    @staticmethod
+    def is_table_header(row: Row) -> bool:
+        return row_is_words(
+            row,
+            ["Artikel", "Menge", "Einheit", "Preis", "Wert", "EUR"],
+        )
+
+    def get_delivery_info(
+        self,
+        page: popplerqt5.Poppler.Page,
+        row: Row,
+    ) -> DeliveryInfo:
+        number_next = False
+        delivery_number = None  # type: Optional[popplerqt5.Poppler.TextBox]
+        for tbox in iter_row(row):
+            if tbox.text() == "Lfs.:":
+                number_next = True
+                self.enqueue_annotation(
+                    [tbox],
+                    nmax=1,
+                    page=page,
+                    prefix="TableExtractor.get_delivery_info",
+                    orientation=True,
+                )
+            elif number_next:
+                delivery_number = tbox
+                number_next = False
+            elif delivery_number:
+                try:
+                    parsed_date = datetime.strptime(tbox.text(), "%d.%m.%Y").date()
+                except ValueError:
+                    pass
+                else:
+                    self.enqueue_annotation(
+                        [delivery_number],
+                        nmax=1,
+                        page=page,
+                        prefix="TableExtractor.get_delivery_info",
+                    )
+                    self.enqueue_annotation(
+                        [tbox],
+                        nmax=1,
+                        page=page,
+                        prefix="TableExtractor.get_delivery_info",
+                    )
+                    return (delivery_number.text(), parsed_date)
+
+        raise ValueError("cannot find delivery info")
+
+    @staticmethod
+    def is_table_subheading(row: Row) -> str:
+        for subheading in [
+            "Verkauf",
+            "Leergutlieferung",
+            "Gratis",
+            "Rückware",
+            # TODO
+        ]:
+            if row_is_words(row, [subheading]):
+                return subheading
+        for subheading in [
+            "Alternativ",
+            "Ersatz",
+            # TODO
+        ]:
+            if row_startswith_words(row, [subheading]):
+                return subheading
+        return ""
+
+    @staticmethod
+    def is_interesting_table_subheading(subheading: str) -> bool:
+        return subheading in [
+            "Verkauf",
+            "Gratis",
+            "Rückware",
+            "Alternativ",
+            "Ersatz",
+        ]
+
+    @staticmethod
+    def is_leergut_header(row: Row) -> bool:
+        return row_is_words(
+            row,
+            [
+                "Leergutartikel",
+                "Lieferung",
+                "Rückgabe",
+                "Differenz",
+                "Pfand",
+                "Wert",
+            ],
+        )
+
+    @staticmethod
+    def is_end_of_delivery(row: Row) -> bool:
+        return row_startswith_words(row, ["Summe", "Lieferschein"])
+
+    def find_table_header(
+        self,
+        page: popplerqt5.Poppler.Page,
+        irows: Iterable[Row],
+    ) -> bool:
+        for row in irows:
+            if self.is_table_header(row):
+                self.enqueue_annotation(
+                    row,
+                    page=page,
+                    prefix="TableExtractor.find_table_header -> TableExtractor.is_table_header",
+                    orientation=True,
+                )
+                return True
         return False
+
+    def get_table_rows(
+        self,
+        page: popplerqt5.Poppler.Page,
+        rows: List[Row],
+    ) -> List[Tuple[Optional[DeliveryInfo], List[Row]]]:
+        current = []  # type: List[Row]
+        table_rows = [
+            (self._delivery, current),
+        ]
+        irows = iter(rows)
+
+        while self.find_table_header(page, irows):
+            for row in irows:
+                new_subheading = self.is_table_subheading(row)
+                if new_subheading:
+                    self._subheading = new_subheading
+                    self.enqueue_annotation(
+                        row,
+                        nmax=1,
+                        page=page,
+                        prefix="TableExtractor.get_table_rows -> TableExtractor.is_table_subheading",
+                        orientation=True,
+                    )
+                elif self.is_leergut_header(row):
+                    self.enqueue_annotation(
+                        row,
+                        page=page,
+                        prefix="TableExtractor.get_table_rows -> TableExtractor.is_leergut_header",
+                        orientation=True,
+                    )
+                    # If Leergut started, there must be a new table header
+                    # before a new delivery can start, so we can skip to the
+                    # next find_table_header.
+                    self._delivery = None
+                    self._subheading = None
+                    break
+                elif self.is_end_of_delivery(row):
+                    self.enqueue_annotation(
+                        row,
+                        nmax=2,
+                        page=page,
+                        prefix="TableExtractor.get_table_rows -> TableExtractor.is_end_of_delivery",
+                        orientation=True,
+                    )
+                    # If the delivery does not contain any Leergut, the next
+                    # delivery will start without a new table header.
+                    # So we do not break but continue on.
+                    self._delivery = None
+                    self._subheading = None
+                elif self._subheading is None:
+                    try:
+                        self._delivery = self.get_delivery_info(page, row)
+                    except ValueError:
+                        pass
+                    else:
+                        # omit empty deliveries
+                        if current:
+                            current = []
+                            table_rows.append((self._delivery, current))
+                        else:
+                            table_rows[-1] = (self._delivery, current)
+                elif self.is_interesting_table_subheading(self._subheading):
+                    current.append(row)
+
+        if not current:
+            assert table_rows.pop()[1] is current
+
+        return table_rows
 
 
 NewColumns = Tuple[
@@ -563,6 +932,7 @@ NewColumns = Tuple[
     Row,
     Row,
 ]
+
 
 # we use the look-behind as well as the \b at the beginning to match these as well:
 # "Bulmers Original Cid.EW12x0,50"
@@ -591,19 +961,21 @@ def extract_size(name: str) -> Tuple[str, str]:
             return (prefix + " " + suffix, size)
 
 
-class NewInvoice(Invoice):
+class NewInvoice(Invoice, QueuedAnnotations):
     @classmethod
     def load(cls, name: str) -> "NewInvoice":
         return cls(popplerqt5.Poppler.Document.load(name))
 
     def __init__(self, doc: popplerqt5.Poppler.Document):
-        self._page_rows = []  # type: List[List[Row]]
+        QueuedAnnotations.__init__(self)
+        self._page_rows = []  # type: List[Tuple[popplerqt5.Poppler.Page, List[Row]]]
         for i in range(len(doc)):
             page = doc.page(i)
             self._page_rows.append(
-                self._as_rows(only_starts_of_next_word_chains(page.textList()))
+                (page, self._as_rows(only_starts_of_next_word_chains(page.textList())))
             )
         self._invoice_id, self._invoice_date = self.get_invoice_info()
+        self._table_extractor = TableExtractor()
         # expected to exist
         self.pages = []  # type: List[InvoicePage]
 
@@ -673,27 +1045,6 @@ class NewInvoice(Invoice):
 
         return [[tbox for _, _, tbox in row.boxes] for row in rows]
 
-    def _get_delivery_info(self, row: Row) -> Tuple[str, date]:
-        number_next = False
-        delivery_number = None  # type: Optional[popplerqt5.Poppler.TextBox]
-        for tbox in iter_row(row):
-            if tbox.text() == "Lfs.:":
-                number_next = True
-            elif number_next:
-                delivery_number = tbox
-                number_next = False
-            elif delivery_number:
-                try:
-                    parsed_date = datetime.strptime(tbox.text(), "%d.%m.%Y").date()
-                except ValueError:
-                    pass
-                else:
-                    delivery_number.used = True
-                    tbox.used = True
-                    return (delivery_number.text(), parsed_date)
-
-        raise ValueError("cannot find delivery info")
-
     def get_invoice_info(self) -> Tuple[str, date]:
         invoice_number = None  # type: Optional[popplerqt5.Poppler.TextBox]
         invoice_date = None  # type: Optional[popplerqt5.Poppler.TextBox]
@@ -702,14 +1053,21 @@ class NewInvoice(Invoice):
         rechnung = ["R", "E", "C", "H", "N", "U", "N", "G:"]
         i = 0
         date_next = False
-        for page in self._page_rows:
-            for row in page:
+        for page, page_rows in self._page_rows:
+            for row in page_rows:
                 for tbox in iter_row(row):
                     if not invoice_number:
                         if i == len(rechnung):
                             invoice_number = tbox
                         elif tbox.text() == rechnung[i]:
                             i += 1
+                            self.enqueue_annotation(
+                                [tbox],
+                                nmax=1,
+                                page=page,
+                                prefix="NewInvoice.get_invoice_info",
+                                orientation=True,
+                            )
                         else:
                             i = int(tbox.text() == rechnung[0])
 
@@ -724,10 +1082,28 @@ class NewInvoice(Invoice):
                             else:
                                 invoice_date = tbox
                         date_next = tbox.text() == "Rechnungsdatum:"
+                        if date_next:
+                            self.enqueue_annotation(
+                                [tbox],
+                                nmax=1,
+                                page=page,
+                                prefix="NewInvoice.get_invoice_info",
+                                orientation=True,
+                            )
 
                     if invoice_number and invoice_date and parsed_date:
-                        invoice_number.used = True
-                        invoice_date.used = True
+                        self.enqueue_annotation(
+                            [invoice_number],
+                            nmax=1,
+                            page=page,
+                            prefix="NewInvoice.get_invoice_info",
+                        )
+                        self.enqueue_annotation(
+                            [invoice_date],
+                            nmax=1,
+                            page=page,
+                            prefix="NewInvoice.get_invoice_info",
+                        )
                         return (invoice_number.text(), parsed_date)
 
         raise ValueError("cannot find invoice info")
@@ -745,7 +1121,6 @@ class NewInvoice(Invoice):
                         s += tbox.text()
                         if tbox.hasSpaceAfter():
                             s += " "
-                        tbox.used = True
                         tbox = tbox.nextWord()
             formatted.append(s)
 
@@ -770,7 +1145,7 @@ class NewInvoice(Invoice):
 
     def _pad_rows(
         self,
-        rows: Iterator[ParsedRow],
+        rows: Iterable[ParsedRow],
         delivery_date: Optional[date],
         delivery_id: str,
     ) -> Iterator[PaddedRow]:
@@ -784,135 +1159,48 @@ class NewInvoice(Invoice):
             )
 
     def __iter__(self) -> Iterator[PaddedRow]:
-        delivery_id = ""
-        delivery_date = None  # type: Optional[date]
-        for page in self._page_rows:
-            rows = iter(page)
+        for page, page_rows in self._page_rows:
+            for delivery, rows in self._table_extractor.get_table_rows(page, page_rows):
+                delivery_id, delivery_date = delivery or (
+                    "",
+                    None,
+                )  # type: Tuple[str, Optional[date]]
 
-            for row in rows:
-                if row_is_words(
-                    row,
-                    ["Artikel", "Menge", "Einheit", "Preis", "Wert", "EUR"],
-                ):
-                    mark_row_as_used(row)
-                    break
-            else:
-                continue  # cannot find table header
+                columns = guess_columns(rows, page)
+                assert (
+                    len(columns) == 5
+                ), f"expected table to have 5 columns, got {len(columns)}"
 
-            # skip leading text
-            leergut = False
-            table_rows = []  # type: List[Row]
-            for row in rows:
-                # we skip everything leading up to first interesting header...
-                if (
-                    row_is_words(row, ["Verkauf"])
-                    or row_is_words(row, ["Gratis"])
-                    or row_is_words(row, ["Rückware"])
-                ):
-                    mark_row_as_used(row)
-                    # "Verkauf" starts a new table, so we parse everything up
-                    # to the end of the Lieferschein.
-                    table_rows = []
-                    for row in rows:
-                        if is_end_of_delivery(row):
-                            break
-                        elif row_is_words(
-                            row,
-                            [
-                                "Leergutartikel",
-                                "Lieferung",
-                                "Rückgabe",
-                                "Differenz",
-                                "Pfand",
-                                "Wert",
-                            ],
-                        ):
-                            mark_row_as_used(row)
-                            leergut = True
-                            break
-                        table_rows.append(row)
-                    yield from self._pad_rows(
-                        self._parse_table(iter(table_rows)),
-                        delivery_date,
-                        delivery_id,
-                    )
-                    table_rows = []
-                # ...except when we find the end of a Lieferschein, then we process
-                # the skipped rows.
-                elif is_end_of_delivery(row):
-                    yield from self._pad_rows(
-                        self._parse_table(iter(table_rows)),
-                        delivery_date,
-                        delivery_id,
-                    )
-                    table_rows = []
-                # when Leergut starts we are done with the page
-                elif row_is_words(
-                    row,
-                    [
-                        "Leergutartikel",
-                        "Lieferung",
-                        "Rückgabe",
-                        "Differenz",
-                        "Pfand",
-                        "Wert",
-                    ],
-                ):
-                    mark_row_as_used(row)
-                    leergut = True
-                # The row might be part of a continued table, so we keep it for later.
-                else:
-                    table_rows.append(row)
-                    try:
-                        # extract delivery info from row
-                        delivery_id, delivery_date = self._get_delivery_info(row)
-                    except ValueError:
-                        pass
+                yield from self._pad_rows(
+                    self._parse_table(columns, rows, page),
+                    delivery_date,
+                    delivery_id,
+                )
 
-                if leergut:
-                    rows = iter(table_rows)
-                    break
+            self._table_extractor.add_annotations()
+            self.add_annotations()
 
-            yield from self._pad_rows(
-                self._parse_table(rows),
-                delivery_date,
-                delivery_id,
-            )
-
-    def _parse_table(self, rows: Iterator[Row]) -> Iterator[ParsedRow]:
-        # collect rows of table
-        table = []  # type: List[Row]
-        for row in rows:
-            if (
-                row_is_words(row, ["Verkauf"])
-                or row_is_words(row, ["Leergutlieferung"])
-                or row_is_words(row, ["Gratis"])
-                or row_is_words(row, ["Rückware"])
-                or row_startswith_words(row, ["Alternativ"])
-            ):
-                mark_row_as_used(row)
-                continue
-            table.append(row)
-
-        if not table:
-            return
-
-        columns = guess_columns(table)
-        assert (
-            len(columns) == 5
-        ), f"expected table to have 5 columns, got {len(columns)}"
-
+    def _parse_table(
+        self,
+        columns: List[TableColumn],
+        rows: Iterable[Row],
+        page: popplerqt5.Poppler.Page,
+    ) -> Iterator[ParsedRow]:
         combined_row = ([], [], [], [], [])  # type: NewColumns
-        for row in table:
+        for row in rows:
             parsed_row = ([], [], [], [], [])  # type: NewColumns
             for tbox in row:
-                right, left = get_word_chain_right_left(tbox)
+                dim = get_word_chain_dimensions(tbox)
                 try:
-                    i = get_column(columns, left, right)
+                    i = get_column(columns, dim.left, dim.right)
                 except ValueError:
+                    # just ignore suspicious rows
+                    if len(row) != 5:
+                        continue
                     raise ValueError(
-                        f"{repr(tbox.text())} ({(left, right)}) does not fit in the table"
+                        f"{repr(tbox.text())} {(dim.left, dim.right)} does not fit in the table"
                     )
+                self.enqueue_annotation([tbox], page=page, prefix="NewInvoice.__iter__")
                 parsed_row[i].append(tbox)
             if (
                 not parsed_row[0]
