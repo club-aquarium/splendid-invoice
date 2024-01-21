@@ -18,15 +18,18 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 
 import argparse
-import csv
 import sys
+from collections.abc import Iterable
+from types import TracebackType
 from typing import (
+    Any,
     List,
     Optional,
     TextIO,
+    Type,
 )
 
-from .base import Invoice
+from .base import CSVOutput, Invoice
 from .splendid import MonospaceInvoice, NewInvoice
 from .zugferd_1p0 import Zugferd1p0Invoice
 
@@ -35,17 +38,45 @@ def open_stdout() -> TextIO:
     return open(sys.stdout.fileno(), "w", encoding="utf-8", newline="", closefd=False)
 
 
+class CSVStdout(CSVOutput):
+    def __init__(self) -> None:
+        self.stdout = open_stdout()
+        try:
+            super().__init__(self.stdout)
+        except BaseException:
+            self.stdout.close()
+            raise
+        self.buffered_headers = []  # type: List[Iterable[Any]]
+
+    def __exit__(
+        self,
+        type: Optional[Type[BaseException]],
+        value: Optional[BaseException],
+        traceback: Optional[TracebackType],
+    ) -> Optional[bool]:
+        self.stdout.close()
+        return super().__exit__(type, value, traceback)
+
+    def writeheaders(self, headers: Iterable[Any]) -> None:
+        self.buffered_headers.append(headers)
+
+    def writerow(self, row: Iterable[Any]) -> None:
+        if self.buffered_headers:
+            for header in self.buffered_headers:
+                super().writeheaders(header)
+            self.buffered_headers = []
+        super().writerow(row)
+
+
 def csv_from_pdf(
-    fileobj: TextIO,
+    out: CSVOutput,
     invoice: Invoice,
-    write_headers: bool = False,
     print_pages: bool = False,
 ) -> None:
-    out = csv.writer(fileobj, delimiter=";", quoting=csv.QUOTE_ALL)
-    if write_headers:
-        out.writerow(invoice.headers)
+    out.writeheaders(invoice.headers)
     for row in invoice:
         out.writerow(row)
+
     if print_pages:
         invoice.print_pages()
 
@@ -63,8 +94,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("invoice", nargs="+", metavar="<invoice>")
     args = p.parse_args(argv)
 
-    with open_stdout() as stdout:
-        first = True
+    with CSVStdout() as out:
         for name in args.invoice:
             try:
                 invoice = Zugferd1p0Invoice.load(name)  # type: Invoice
@@ -73,10 +103,4 @@ def main(argv: Optional[List[str]] = None) -> None:
                     invoice = MonospaceInvoice.load(name)
                 except AssertionError:
                     invoice = NewInvoice.load(name)
-            csv_from_pdf(
-                stdout,
-                invoice,
-                write_headers=first,
-                print_pages=args.verbose,
-            )
-            first = False
+            csv_from_pdf(out, invoice, print_pages=args.verbose)

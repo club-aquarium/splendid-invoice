@@ -17,15 +17,59 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 
+import csv
 import sys
+from collections.abc import Iterable
 from datetime import date
+from types import TracebackType
 from typing import List  # noqa: F401
 from typing import (
+    Any,
     Iterator,
     Optional,
+    Protocol,
     TextIO,
     Tuple,
+    Type,
+    TypeVar,
 )
+
+_T_contra = TypeVar("_T_contra", contravariant=True)
+
+
+# see https://github.com/python/typeshed/blob/54fde0c2a104241077a61172c8de53d60519670a/stdlib/_typeshed/__init__.pyi#L182-L184
+class SupportsWrite(Protocol[_T_contra]):
+    def write(self, __s: _T_contra) -> object:
+        ...
+
+
+T = TypeVar("T", bound="CSVOutput")
+
+
+class CSVOutput(object):
+    delimiter = ";"
+    quoting = csv.QUOTE_ALL
+
+    def __init__(self, out: SupportsWrite[str]):
+        self._writer = csv.writer(out, delimiter=self.delimiter, quoting=self.quoting)
+
+    def __enter__(self: T) -> T:
+        return self
+
+    def __exit__(
+        self,
+        type: Optional[Type[BaseException]],
+        value: Optional[BaseException],
+        traceback: Optional[TracebackType],
+    ) -> Optional[bool]:
+        return None
+
+    def writeheaders(self, headers: Iterable[Any]) -> None:
+        self.writerow(headers)
+
+    def writerow(self, row: Iterable[Any]) -> None:
+        self._writer.writerow(row)
+
 
 ParsedRow = Tuple[
     str,  # Artikel

@@ -56,11 +56,14 @@ def filter_expected_csv(dest: str) -> str:
 
 def csv_rows(name: str) -> Iterator[Tuple[str, ...]]:
     with open(name, "r", encoding="utf-8", newline="") as fp:
-        for row in csv.reader(fp, delimiter=";"):
+        for row in csv.reader(
+            fp,
+            delimiter=splendid_invoice.mail.GitCSVOutput.delimiter,
+        ):
             yield tuple(row)
 
 
-class TestMailGit(unittest.TestCase):
+class TestGitFullMailbox(unittest.TestCase):
     def setUp(self) -> None:
         temp = tempfile.TemporaryDirectory(prefix="splendid-invoice.")
         self.addCleanup(temp.cleanup)
@@ -98,7 +101,7 @@ class TestMailGit(unittest.TestCase):
 
             splendid_invoice.mail.main(mail_args)
 
-    def test_mail_git(self) -> None:
+    def test_git_full_mailbox(self) -> None:
         a = list(csv_rows(self.expected_csv))
         b = list(csv_rows(self.got_csv))
         # We allow exactly one block of additional lines in `self.got_csv` in

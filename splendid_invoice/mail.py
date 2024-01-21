@@ -28,23 +28,31 @@ import shlex
 import subprocess
 import sys
 import threading
-
-from contextlib import contextmanager
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from email.message import Message
 from email.utils import mktime_tz, parsedate_tz
 from queue import Queue
 from tempfile import NamedTemporaryFile
-from typing import BinaryIO, Iterator, List, Optional, TextIO, Tuple, cast
+from types import TracebackType
+from typing import (
+    Any,
+    BinaryIO,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Type,
+)
 
 import popplerqt5  # type: ignore
 
 from . import (
+    CSVStdout,
     csv_from_pdf,
-    open_stdout,
 )
-from .base import DummyInvoice
 from .base import Invoice  # noqa: F401
+from .base import CSVOutput, DummyInvoice
 from .splendid import (
     MonospaceInvoice,
     NewInvoice,
@@ -166,30 +174,11 @@ def fetch_pdfs(
         t.join()
 
 
-@contextmanager
-def wrapped_open_stdout(first: bool) -> Iterator[Tuple[bool, TextIO]]:
-    with open_stdout() as stdout:
-        yield (first, stdout)
-
-
 def open_noexist(name: str) -> BinaryIO:
     try:
         return open(name, "rb")
     except FileNotFoundError:
         return open(os.path.devnull, "rb")
-
-
-@contextmanager
-def renamed_tempfile(dest: str) -> Iterator[TextIO]:
-    with NamedTemporaryFile(
-        dir=os.path.dirname(dest) or os.path.curdir,
-        mode="w",
-        encoding="utf-8",
-        newline="",
-    ) as tmp:
-        yield cast(TextIO, tmp)
-        os.rename(tmp.name, dest)
-        tmp._closer.delete = False
 
 
 def try_decode_utf8(b: bytes) -> str:
@@ -209,95 +198,191 @@ def decode_lines(it: Iterator[bytes]) -> Iterator[str]:
             yield try_decode_utf8(line)
 
 
-@contextmanager
-def append_csv(name: str) -> Iterator[Tuple[bool, TextIO]]:
-    with open_noexist(name) as inp, renamed_tempfile(name) as out:
-        lines = decode_lines(iter(inp))
+class GitCSVOutput(CSVOutput):
+    def __init__(
+        self,
+        path: str,
+        message: Message,
+        pdfname: str,
+        verbose: bool = False,
+    ):
+        self.path = path
+        self.message = message
+        self.pdfname = pdfname
+        self.verbose = verbose
+
+        self.directory = os.path.dirname(self.path) or os.path.curdir
+        self.basename = os.path.basename(self.path)
+        assert self.basename
+
+        self.empty = True
+        self.buffered_headers = []  # type: List[Iterable[Any]]
+        self.inp = open_noexist(self.path)
+        try:
+            self.inp_lines = decode_lines(iter(self.inp))
+            self.out = NamedTemporaryFile(
+                dir=os.path.dirname(self.path) or os.path.curdir,
+                mode="w",
+                encoding="utf-8",
+                newline="",
+            )
+            try:
+                super().__init__(self.out)
+            except BaseException:
+                self.out.close()
+                raise
+        except BaseException:
+            self.inp.close()
+            raise
+
+    def __exit__(
+        self,
+        type: Optional[Type[BaseException]],
+        value: Optional[BaseException],
+        traceback: Optional[TracebackType],
+    ) -> Optional[bool]:
+        try:
+            # do nothing on exception
+            if type is not None:
+                return super().__exit__(type, value, traceback)
+
+            self.copy_tail()
+
+            os.replace(self.out.name, self.path)
+        finally:
+            # close open files
+            try:
+                self.out.close()
+            except FileNotFoundError:
+                pass
+            finally:
+                self.inp.close()
+        self.commit()
+        return super().__exit__(type, value, traceback)
+
+    def writeheaders(self, headers: Iterable[Any]) -> None:
+        self.buffered_headers.append(headers)
+
+    def write_buffered_headers(self) -> None:
+        for header in self.buffered_headers:
+            super().writeheaders(header)
+        self.buffered_headers = []
+
+    def writerow(self, row: Iterable[Any]) -> None:
+        if self.empty:
+            self.empty = False
+            if not self.copy_head():
+                self.write_buffered_headers()
+        super().writerow(row)
+
+    def copy_head(self) -> bool:
+        """Copy leading lines from self.inp to self.out. Return True if
+        anything was written.
+        """
+        return False
+
+    def copy_tail(self) -> None:
+        """Copy trailing lines from self.inp to self.out."""
+        pass
+
+    def run_git(
+        self,
+        *args: str,
+        input: Optional[bytes] = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess:
+        cmd = ["git", "-C", self.directory, *args]
+        if self.verbose:
+            print("$", *map(shlex.quote, cmd), file=sys.stderr)
+        return subprocess.run(
+            cmd,
+            input=input,
+            stdin=subprocess.DEVNULL if input is None else None,
+            check=check,
+        )
+
+    def commit(self) -> None:
+        p = self.run_git("diff", "--quiet", "HEAD", "--", self.basename, check=False)
+        if p.returncode == 0:
+            return
+
+        self.run_git("add", "--", self.basename)
+
+        cmd = ["commit", "-F", "-"]
+        date = get_message_date(self.message)
+        if date:
+            cmd.append("--date=" + date.strftime("%Y-%m-%dT%H:%M:%S%z"))
+        if self.verbose:
+            cmd.append("--verbose")
+        cmd.append("--")
+        cmd.append(self.basename)
+        message = [f"add {self.pdfname}", ""]
+        for header in ("Subject", "From", "Date"):
+            if header in self.message:
+                for value, _ in email.header.decode_header(
+                    self.message.get(header, "")
+                ):
+                    assert isinstance(value, str)
+                    message.append(f"{header}: {value}")
+        self.run_git(*cmd, input="\n".join(message).encode("utf-8"))
+
+
+class GitCSVOutputAppend(GitCSVOutput):
+    def copy_head(self) -> bool:
         # prepend old lines
         empty = True
-        for line in lines:
-            out.write(line)
+        for line in self.inp_lines:
+            self.out.write(line)
             empty = False
-        # empty file needs new headers
-        yield (empty, out)
+        return not empty
 
 
-@contextmanager
-def prepend_csv(name: str) -> Iterator[Tuple[bool, TextIO]]:
-    with open_noexist(name) as inp, renamed_tempfile(name) as out:
-        lines = decode_lines(iter(inp))
+class GitCSVOutputPrepend(GitCSVOutput):
+    def copy_head(self) -> bool:
         # skip header
-        reader = csv.reader(lines, delimiter=";")
+        reader = csv.reader(self.inp_lines, delimiter=self.delimiter)
         try:
             next(iter(reader))
         except StopIteration:
             pass
-        # tell caller to write new header
-        yield (True, out)
+        return False
+
+    def copy_tail(self) -> None:
         # append old lines
-        for line in lines:
-            out.write(line)
+        for line in self.inp_lines:
+            self.out.write(line)
 
 
 def parse_datetime(dt: str) -> datetime:
     return datetime.strptime(dt, "%Y-%m-%d %H:%M:%S%z")
 
 
-def git_get_author_time(path: str) -> Optional[datetime]:
+def git_get_author_time(path: str, verbose: bool) -> Optional[datetime]:
+    cmd = [
+        "git",
+        "-C",
+        os.path.dirname(path) or os.path.curdir,
+        "log",
+        "--format=format:%aI",  # ISO-8601 author date
+        "--max-count=1",
+        "--",
+        os.path.basename(path) or os.path.curdir,
+    ]
+    if verbose:
+        print("$", *map(shlex.quote, cmd), file=sys.stderr)
     proc = subprocess.run(
-        [
-            "git",
-            "-C",
-            os.path.dirname(path) or os.path.curdir,
-            "log",
-            "--format=format:%aI",  # ISO-8601 author date
-            "--max-count=1",
-            "--",
-            os.path.basename(path) or os.path.curdir,
-        ],
+        cmd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        encoding="utf-8",
     )
     if proc.returncode == 0 and proc.stdout:
-        return datetime.strptime(proc.stdout.strip(), "%Y-%m-%dT%H:%M:%S%z")
+        return datetime.strptime(
+            proc.stdout.strip().decode("utf-8"),
+            "%Y-%m-%dT%H:%M:%S%z",
+        )
     else:
         return None
-
-
-def git_commit(path: str, msg: Message, pdfname: str, verbose: bool) -> None:
-    git = ["git", "-C", os.path.dirname(path) or os.path.curdir]
-    name = os.path.basename(path) or os.path.curdir
-
-    p = subprocess.run(
-        [*git, "diff", "--quiet", "HEAD", "--", name], stdin=subprocess.DEVNULL
-    )
-    if p.returncode == 0:
-        return
-
-    cmd = [*git, "add", "--", name]
-    if verbose:
-        print("$", *map(shlex.quote, cmd), file=sys.stderr)
-    subprocess.run(cmd, stdin=subprocess.DEVNULL, check=True)
-
-    cmd = [*git, "commit", "-F", "-"]
-    date = get_message_date(msg)
-    if date:
-        cmd.append("--date=" + date.strftime("%Y-%m-%dT%H:%M:%S%z"))
-    if verbose:
-        cmd.append("--verbose")
-    cmd.append("--")
-    cmd.append(name)
-    message = [f"add {pdfname}", ""]
-    for header in ("Subject", "From", "Date"):
-        if header in msg:
-            for value, _ in email.header.decode_header(msg.get(header, "")):
-                assert isinstance(value, str)
-                message.append(f"{header}: {value}")
-    if verbose:
-        print("$", *map(shlex.quote, cmd), file=sys.stderr)
-    subprocess.run(cmd, input="\n".join(message), encoding="utf-8", check=True)
 
 
 def print_mail_info(msg: Message, name: str) -> None:
@@ -381,7 +466,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     after = args.after
     if args.git is not None:
         if after is None:
-            after = git_get_author_time(args.git)
+            after = git_get_author_time(args.git, args.verbose)
         # TODO check if args.git is dirty
 
     first = True
@@ -393,7 +478,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         max_count=args.max_count,
         after=after,
     ):
-        if not first:
+        if first:
+            first = False
+        else:
             print(file=sys.stderr)
         print_mail_info(msg, pdfname)
         pdf = None  # type: Optional[popplerqt5.Poppler.Document]
@@ -406,13 +493,13 @@ def main(argv: Optional[List[str]] = None) -> None:
                 except (AssertionError, ValueError):
                     pass
             if args.git is None:
-                context = wrapped_open_stdout(first)
+                out = CSVStdout()  # type: CSVOutput
             elif args.reverse:
-                context = prepend_csv(args.git)
+                out = GitCSVOutputPrepend(args.git, msg, pdfname, args.verbose)
             else:
-                context = append_csv(args.git)
-            with context as (write_headers, out):
-                csv_from_pdf(out, invoice, write_headers, print_pages=args.verbose)
+                out = GitCSVOutputAppend(args.git, msg, pdfname, args.verbose)
+            with out:
+                csv_from_pdf(out, invoice, print_pages=args.verbose)
         except Exception:
             with NamedTemporaryFile(
                 "wb", prefix="splendid-invoice.", suffix=".pdf", delete=False
@@ -432,9 +519,6 @@ def main(argv: Optional[List[str]] = None) -> None:
                     file=sys.stderr,
                 )
             raise
-        if args.git is not None:
-            git_commit(args.git, msg, pdfname, args.verbose)
-        first = False
 
         if args.confirm:
             print(end="Press Enter to continue...")

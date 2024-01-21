@@ -1,8 +1,10 @@
 { lib
 , buildPythonApplication
+, pythonOlder
 , poppler-qt5
 , black
 , flake8
+, git
 , mypy
 }:
 
@@ -10,13 +12,16 @@ buildPythonApplication {
   pname = "splendid-invoice";
   version = "0.0.0";
 
+  disabled = pythonOlder "3.8";
+
   src = ./.;
 
   propagatedBuildInputs = [ poppler-qt5 ];
 
-  nativeBuildInputs = [
+  nativeCheckInputs = [
     black
     flake8
+    git
     mypy
   ];
 
