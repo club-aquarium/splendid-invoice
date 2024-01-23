@@ -43,6 +43,8 @@ from typing import (
     Optional,
     Tuple,
     Type,
+    TypeVar,
+    cast,
 )
 
 import popplerqt5  # type: ignore
@@ -181,34 +183,42 @@ def open_noexist(name: str) -> BinaryIO:
         return open(os.path.devnull, "rb")
 
 
-def try_decode_utf8(b: bytes) -> str:
-    try:
-        return b.decode("utf-8")
-    except UnicodeDecodeError:
-        return b.decode("iso-8859-1")
-
-
-def decode_lines(it: Iterator[bytes]) -> Iterator[str]:
-    for bline in it:
-        # Behave like TextIOWrapper's newline="". We know there will be no
-        # b"\n" in the line, except at the end. The very last line may not even
-        # have that b"\n". So we split after every b"\r", that is not followed
-        # by a b"\n" or EOF.
-        for line in re.split(rb"(?<=\r)(?!\n|$)", bline):
-            yield try_decode_utf8(line)
+T = TypeVar("T", bound="GitCSVOutput")
 
 
 class GitCSVOutput(CSVOutput):
+    @staticmethod
+    def get_rotate_filename(base: str, i: int, ext: str) -> str:
+        assert i >= 0
+        name = base
+        if i > 0:
+            name += "-%d" % i
+        name += ext
+        return name
+
+    @staticmethod
+    def copy_all(src: BinaryIO, dst: BinaryIO, force_eol: bool = False) -> None:
+        b = None  # type: Optional[bytes]
+        for b in iter(lambda: src.read(4096), b""):
+            assert dst.write(b) == len(b)
+        if force_eol and b is not None:
+            if b.endswith(b"\r"):
+                dst.write(b"\n")
+            elif not b.endswith(b"\n"):
+                dst.write(b"\r\n")
+
     def __init__(
         self,
         path: str,
         message: Message,
         pdfname: str,
+        max_size: Optional[int] = None,
         verbose: bool = False,
     ):
         self.path = path
         self.message = message
         self.pdfname = pdfname
+        self.max_size = max_size
         self.verbose = verbose
 
         self.directory = os.path.dirname(self.path) or os.path.curdir
@@ -219,21 +229,52 @@ class GitCSVOutput(CSVOutput):
         self.buffered_headers = []  # type: List[Iterable[Any]]
         self.inp = open_noexist(self.path)
         try:
-            self.inp_lines = decode_lines(iter(self.inp))
             self.out = NamedTemporaryFile(
                 dir=os.path.dirname(self.path) or os.path.curdir,
-                mode="w",
-                encoding="utf-8",
-                newline="",
+                mode="w+b",
             )
             try:
-                super().__init__(self.out)
+                super().__init__(self)
             except BaseException:
                 self.out.close()
                 raise
         except BaseException:
             self.inp.close()
             raise
+
+    # csv.reader/.writer compatibility methods
+
+    @staticmethod
+    def try_decode_utf8(b: bytes) -> str:
+        try:
+            return b.decode("utf-8")
+        except UnicodeDecodeError:
+            return b.decode("iso-8859-1")
+
+    def readline(self) -> bytes:
+        # readline reads up to the next b"\n", but only want to the next b"\r",
+        # b"\n", or b"\r\n", so we seek backwards.
+        lf_line = self.inp.readline()
+        if not lf_line:
+            return lf_line
+        any_line = lf_line.splitlines(keepends=True)[0]
+        off = len(lf_line) - len(any_line)
+        if off > 0:
+            self.inp.seek(-off, os.SEEK_CUR)
+        return any_line
+
+    def __iter__(self: T) -> T:
+        return self
+
+    def __next__(self) -> str:
+        line = self.readline()
+        if not line:
+            raise StopIteration
+        return self.try_decode_utf8(line)
+
+    def write(self, s: str) -> None:
+        b = s.encode("utf-8")
+        assert self.out.write(b) == len(b)
 
     def __exit__(
         self,
@@ -259,6 +300,8 @@ class GitCSVOutput(CSVOutput):
                 self.inp.close()
         self.commit()
         return super().__exit__(type, value, traceback)
+
+    # CSVOutput methods
 
     def writeheaders(self, headers: Iterable[Any]) -> None:
         self.buffered_headers.append(headers)
@@ -289,6 +332,7 @@ class GitCSVOutput(CSVOutput):
         self,
         *args: str,
         input: Optional[bytes] = None,
+        stdout: Optional[int] = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess:
         cmd = ["git", "-C", self.directory, *args]
@@ -298,8 +342,55 @@ class GitCSVOutput(CSVOutput):
             cmd,
             input=input,
             stdin=subprocess.DEVNULL if input is None else None,
+            stdout=stdout,
             check=check,
         )
+
+    def _rotate_file(self, base: str, i: int, ext: str) -> Tuple[str, int]:
+        src = self.get_rotate_filename(base, i, ext)
+        n = i
+        if os.path.exists(os.path.join(self.directory, src)):
+            dest, n = self._rotate_file(base, i + 1, ext)
+            assert not os.path.exists(dest)
+            self.run_git("mv", "--", src, dest)
+            self.run_git("commit", "-m", f"rotate {src} ({n - i}/{n})")
+        return (src, n)
+
+    def rotate_file(self) -> None:
+        p = self.run_git("rev-parse", "HEAD", stdout=subprocess.PIPE, check=False)
+        old_head = os.fsdecode(p.stdout.strip()) if p.returncode == 0 else None
+
+        base, ext = os.path.splitext(self.basename)
+        _, n = self._rotate_file(base, 0, ext)
+
+        if n > 1 and old_head is not None:
+            merge = os.fsdecode(
+                self.run_git(
+                    "commit-tree",
+                    "-p",
+                    old_head,
+                    "-p",
+                    "HEAD",
+                    "-m",
+                    f"rotate {self.basename}",
+                    "HEAD^{tree}",
+                    stdout=subprocess.PIPE,
+                ).stdout.strip()
+            )
+
+            p = self.run_git(
+                "symbolic-ref",
+                "HEAD",
+                stdout=subprocess.PIPE,
+                check=False,
+            )
+            branch = os.fsdecode(p.stdout.strip()) if p.returncode == 0 else None
+
+            self.run_git("update-ref", "HEAD" if branch is None else branch, merge)
+
+        # `self.path` is untracked after git-mv
+        open(self.path, "ab").close()
+        self.run_git("add", "--intent-to-add", "--", self.basename)
 
     def commit(self) -> None:
         p = self.run_git("diff", "--quiet", "HEAD", "--", self.basename, check=False)
@@ -328,19 +419,62 @@ class GitCSVOutput(CSVOutput):
 
 
 class GitCSVOutputAppend(GitCSVOutput):
+    @staticmethod
+    def move_left(fp: BinaryIO, dest: int, src: int) -> None:
+        if src == dest:
+            # nothing to do
+            return
+        assert src > dest, f"dest={dest} is not before src={src}"
+        bufsize = min(4096, src - dest)
+        while True:
+            fp.seek(src)
+            buf = fp.read(bufsize)
+            fp.seek(dest)
+            if not buf:
+                break
+            assert fp.write(buf) == len(buf)
+            src += len(buf)
+            dest += len(buf)
+
+    def __init__(
+        self,
+        path: str,
+        message: Message,
+        pdfname: str,
+        max_size: Optional[int] = None,
+        verbose: bool = False,
+    ):
+        self.old_size = 0
+        super().__init__(path, message, pdfname, max_size, verbose)
+
     def copy_head(self) -> bool:
         # prepend old lines
-        empty = True
-        for line in self.inp_lines:
-            self.out.write(line)
-            empty = False
-        return not empty
+        self.copy_all(self.inp, cast(BinaryIO, self.out), force_eol=True)
+        self.old_size = self.out.tell()
+        return self.old_size > 0
+
+    def copy_tail(self) -> None:
+        if (
+            self.max_size is not None
+            and self.old_size > 0  # self.inp is not empty
+            and self.out.tell() > self.max_size
+        ):
+            self.out.seek(0)
+            self.write_buffered_headers()
+            src = self.out.tell()
+            assert (
+                src <= self.old_size
+            ), f"buffered headers overwrote part of the new rows (self.out.tell() = {src}, self.old_size = {self.old_size})"
+            self.move_left(cast(BinaryIO, self.out), src, self.old_size)
+            self.out.truncate()
+
+            self.rotate_file()
 
 
 class GitCSVOutputPrepend(GitCSVOutput):
     def copy_head(self) -> bool:
-        # skip header
-        reader = csv.reader(self.inp_lines, delimiter=self.delimiter)
+        # skip header in self.inp
+        reader = csv.reader(self, delimiter=self.delimiter)
         try:
             next(iter(reader))
         except StopIteration:
@@ -348,9 +482,14 @@ class GitCSVOutputPrepend(GitCSVOutput):
         return False
 
     def copy_tail(self) -> None:
-        # append old lines
-        for line in self.inp_lines:
-            self.out.write(line)
+        if (
+            self.max_size is None
+            # old_size + new_size <= max_size
+            or os.stat(self.inp.fileno()).st_size + self.out.tell() <= self.max_size
+        ):
+            self.copy_all(self.inp, cast(BinaryIO, self.out))
+        else:
+            self.rotate_file()
 
 
 def parse_datetime(dt: str) -> datetime:
@@ -395,6 +534,22 @@ def print_mail_info(msg: Message, name: str) -> None:
     finally:
         sys.stderr.write("\x1b[39m")
         sys.stderr.flush()
+
+
+def parse_size(x: str) -> int:
+    for factor, units in [
+        (1000, ["KB"]),
+        (1024, ["K", "Ki", "KiB"]),
+        (1_000_000, ["MB"]),
+        (1024**2, ["M", "Mi", "MiB"]),
+        (1_000_000_000, ["GB"]),
+        (1024**3, ["G", "Gi", "GiB"]),
+        (1, ["B"]),
+    ]:
+        for unit in units:
+            if x.endswith(unit):
+                return int(x[: -len(unit)]) * factor
+    return int(x)
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -461,6 +616,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         action="store_true",
         help="When writing to a git-tracked file, append newer invoices to the top of the file.",
     )
+    g.add_argument(
+        "--max-size",
+        type=parse_size,
+        help="When writing to a git-tracked file, create a file if a maximum file size would be exceeded.",
+    )
     args = p.parse_args(argv)
 
     after = args.after
@@ -495,9 +655,21 @@ def main(argv: Optional[List[str]] = None) -> None:
             if args.git is None:
                 out = CSVStdout()  # type: CSVOutput
             elif args.reverse:
-                out = GitCSVOutputPrepend(args.git, msg, pdfname, args.verbose)
+                out = GitCSVOutputPrepend(
+                    args.git,
+                    msg,
+                    pdfname,
+                    max_size=args.max_size,
+                    verbose=args.verbose,
+                )
             else:
-                out = GitCSVOutputAppend(args.git, msg, pdfname, args.verbose)
+                out = GitCSVOutputAppend(
+                    args.git,
+                    msg,
+                    pdfname,
+                    max_size=args.max_size,
+                    verbose=args.verbose,
+                )
             with out:
                 csv_from_pdf(out, invoice, print_pages=args.verbose)
         except Exception:

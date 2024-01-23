@@ -87,6 +87,7 @@ class TestGitMail(unittest.TestCase):
             subprocess.run(cmd, check=True)
 
         self.git_csv = os.path.join(temp, "invoices.csv")
+        self.git_csv_base, self.git_csv_ext = os.path.splitext(self.git_csv)
         self.mail_cmd = [
             "--host",
             "",
@@ -142,4 +143,99 @@ class TestGitMail(unittest.TestCase):
         for csvpaths in self._incremental_mail(self.mail_cmd + ["--reverse"]):
             got_rows = list(csv_rows(self.git_csv))
             expected_rows = list(concat_csvs(reversed(csvpaths)))
+            self.assertEqual(got_rows, expected_rows)
+
+    def _incremental_mail_some_maxsize(
+        self,
+        argv: List[str],
+    ) -> Iterator[Tuple[List[str], List[str]]]:
+        expeceted_csvs = []  # type: List[str]
+        hashes = []  # type: List[str]
+        add_max_size_argv = True
+        for pdfpath, expeceted_csv in self.mails:
+            max_size_argv = ["--max-size", "1"] if add_max_size_argv else []
+            with patch(
+                "splendid_invoice.mail.fetch_pdfs",
+                partial(fake_fetch_pdf, pdfpath),
+            ):
+                # with self._git_log(start="HEAD~1", extra_argv=["--stat"]):
+                splendid_invoice.mail.main(argv + max_size_argv)
+
+            expeceted_csvs.append(expeceted_csv)
+
+            # add newly created file to list of expected hashes
+            new_hash = os.fsdecode(
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        os.path.dirname(self.git_csv),
+                        "hash-object",
+                        "-t",
+                        "blob",
+                        "--",
+                        self.git_csv,
+                    ],
+                    stdout=subprocess.PIPE,
+                ).stdout.strip()
+            )
+            # If `add_max_size_argv` is True a new CSV file will be created,
+            # otherwise `self.git_csv` (i=0) is updated.
+            if add_max_size_argv or not hashes:
+                hashes.insert(0, new_hash)
+            else:
+                hashes[0] = new_hash
+
+            yield (expeceted_csvs, hashes)
+
+            add_max_size_argv = not add_max_size_argv
+
+    def _iter_path_hash(self, hashes: List[str]) -> Iterator[Tuple[str, str]]:
+        for i, h in enumerate(hashes):
+            yield (
+                splendid_invoice.mail.GitCSVOutput.get_rotate_filename(
+                    self.git_csv_base, i, self.git_csv_ext
+                ),
+                h,
+            )
+
+    def _compare_git_tree(self, hashes: List[str]) -> None:
+        got_tree = os.fsdecode(
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    os.path.dirname(self.git_csv),
+                    "cat-file",
+                    "-p",
+                    "--",
+                    "HEAD^{tree}",
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                check=True,
+            ).stdout
+        ).splitlines()
+        expected_tree = [
+            f"100644 blob {h}\t{os.path.basename(p)}"
+            for p, h in sorted(self._iter_path_hash(hashes))
+        ]
+        self.assertEqual(got_tree, expected_tree)
+
+    def test_append_max_size(self) -> None:
+        for expected_csvs, hashes in self._incremental_mail_some_maxsize(self.mail_cmd):
+            self._compare_git_tree(hashes)
+            got_csvs = [p for p, _ in self._iter_path_hash(hashes)]
+            got_rows = list(concat_csvs(reversed(got_csvs)))
+            expected_rows = list(concat_csvs(expected_csvs))
+            self.assertEqual(got_rows, expected_rows)
+
+    def test_prepend_max_size(self) -> None:
+        for expected_csvs, hashes in self._incremental_mail_some_maxsize(
+            self.mail_cmd + ["--reverse"]
+        ):
+            self._compare_git_tree(hashes)
+            got_csvs = [p for p, _ in self._iter_path_hash(hashes)]
+            got_rows = list(concat_csvs(got_csvs))
+            expected_rows = list(concat_csvs(reversed(expected_csvs)))
             self.assertEqual(got_rows, expected_rows)
