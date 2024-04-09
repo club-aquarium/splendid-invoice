@@ -61,10 +61,12 @@ class CSVStdout(CSVOutput):
         self.buffered_headers.append(headers)
 
     def writerow(self, row: Iterable[Any]) -> None:
-        if self.buffered_headers:
-            for header in self.buffered_headers:
-                super().writeheaders(header)
+        buffered_headers = self.buffered_headers
+        if buffered_headers:
+            # avoid infinite recursion, super().writeheaders calls self.writerow
             self.buffered_headers = []
+            for header in buffered_headers:
+                super().writeheaders(header)
         super().writerow(row)
 
 
