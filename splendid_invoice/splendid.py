@@ -461,6 +461,33 @@ def get_word_chain_dimensions(tbox: popplerqt5.Poppler.TextBox) -> TableColumn:
 Row = List[popplerqt5.Poppler.TextBox]
 
 
+def get_closest_column_indexes(dims: List[TableColumn]) -> Tuple[int, int]:
+    distance = None  # type: Optional[float]
+    closest = None  # type: Optional[Tuple[int, int]]
+    for i, acol in enumerate(dims):
+        for j, bcol in enumerate(dims[:i]):
+            d = min(
+                abs(bcol.left - acol.right),
+                abs(acol.left - bcol.right),
+            )
+            if distance is None or d < distance:
+                distance = d
+                closest = (i, j)
+    assert closest is not None
+    return closest
+
+
+def join_closest_columns_inplace(
+    row: List[Tuple[TableColumn, List[popplerqt5.Poppler.TextBox]]],
+) -> None:
+    i, j = get_closest_column_indexes([dim for dim, _ in row])
+    row[i] = (
+        union_table_columns(row[i][0], row[j][0]),
+        row[i][1] + row[j][1],
+    )
+    row.pop(j)
+
+
 def guess_columns(
     table: List[Row],
     page: Optional[popplerqt5.Poppler.Page] = None,
@@ -471,15 +498,23 @@ def guess_columns(
     """
     columns = []  # type: List[TableColumn]
     for row in table:
+        # In Rechnung_R360251231.pdf article name and unit size are split into
+        # two columns, so we join the closest columns together until 5 columns
+        # are left.
+        # We cannot add words to a wordchain so we have to convert every column
+        # to a list of start words.
+        row_columns = [
+            (get_word_chain_dimensions(tbox), [tbox]) for tbox in row
+        ]  # type: List[Tuple[TableColumn, List[popplerqt5.Poppler.TextBox]]]
+        while len(row_columns) > 5:
+            join_closest_columns_inplace(row_columns)
+
         # We expect our table to have at least 5 columns. If we find less than
         # 5 next-word-chains, we treat the row as suspicious and ignore it, if
         # it would cause us to union columns together.
-        suspicious = len(row) != 5
+        suspicious = len(row_columns) != 5
 
-        for tbox in row:
-            # get dimensions of the next-word-chain
-            dim = get_word_chain_dimensions(tbox)
-
+        for dim, tboxes in row_columns:
             # see NewInvoice._as_rows
             i = bisect.bisect_left(columns, (dim.left,))
             if i < len(columns) and columns[i].left <= dim.right:

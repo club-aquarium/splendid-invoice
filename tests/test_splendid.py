@@ -19,6 +19,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 import csv
 import os
+import pprint
 import re
 import unittest
 from datetime import datetime
@@ -73,12 +74,20 @@ def create_test_method(
         try:
             expected = load_csv(csvpath)
 
+            records = list(invoice)
             i = 0
-            for record in invoice:
-                self.assertTrue(i < len(expected), f"missing records in {pdfpath!r}")
+            for record in records:
+                self.assertTrue(
+                    i < len(expected),
+                    f"got unexpected records in {pdfpath!r}:\n{pprint.pformat(records[i:])}",
+                )
                 self.assertEqual(record, expected[i])
                 i += 1
-            self.assertEqual(i, len(expected), f"got unexpected records in {pdfpath!r}")
+            self.assertEqual(
+                i,
+                len(expected),
+                f"missing records in {pdfpath!r}:\n{pprint.pformat(expected[i:])}",
+            )
         finally:
             dest = os.environ.get("SPLENDID_INVOICE_OUTPUT_DIR", "")
             if dest:
