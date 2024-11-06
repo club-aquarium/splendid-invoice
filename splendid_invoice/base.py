@@ -39,8 +39,7 @@ _T_contra = TypeVar("_T_contra", contravariant=True)
 
 # see https://github.com/python/typeshed/blob/54fde0c2a104241077a61172c8de53d60519670a/stdlib/_typeshed/__init__.pyi#L182-L184
 class SupportsWrite(Protocol[_T_contra]):
-    def write(self, __s: _T_contra) -> object:
-        ...
+    def write(self, __s: _T_contra) -> object: ...  # noqa: E704
 
 
 T = TypeVar("T", bound="CSVOutput")

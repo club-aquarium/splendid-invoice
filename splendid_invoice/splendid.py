@@ -726,9 +726,11 @@ def mark_row_as_used(
         return create_annotate_tbox_funcs(
             page,
             islice(iter_row(row), nmax),
-            color="SPLENDID_INVOICE_ANNOTATION_COLOR_ORIENTATION"
-            if orientation
-            else "SPLENDID_INVOICE_ANNOTATION_COLOR_USED",
+            color=(
+                "SPLENDID_INVOICE_ANNOTATION_COLOR_ORIENTATION"
+                if orientation
+                else "SPLENDID_INVOICE_ANNOTATION_COLOR_USED"
+            ),
             prefix=prefix,
         )
 
