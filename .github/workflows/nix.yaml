@@ -14,3 +14,6 @@ jobs:
     - uses: docker://nixos/nix:latest
       with:
         args: nix-channel --update
+    - uses: docker://nixos/nix:latest
+      with:
+        args: nix-build -E '(import <nixpkgs> {}).python3.pkgs.callPackage ./. {}'
