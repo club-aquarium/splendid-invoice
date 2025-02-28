@@ -15,6 +15,10 @@ jobs:
       uses: docker://docker.io/nixos/nix:latest
       with:
         args: nix-channel --update
+    - name: ls -ahlp
+      uses: docker://nixos/nix:latest
+      with:
+        args: ls -ahlp
     - name: nix-build
       uses: docker://nixos/nix:latest
       with:
