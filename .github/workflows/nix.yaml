@@ -11,15 +11,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - name: nix-channel --update
-      uses: docker://docker.io/nixos/nix:latest
-      with:
-        args: nix-channel --update
-    - name: ls -ahlp
-      uses: docker://nixos/nix:latest
-      with:
-        args: ls -ahlp
-    - name: nix-build
-      uses: docker://nixos/nix:latest
-      with:
-        args: nix-build --show-trace -E "(import <nixpkgs> {}).python3.pkgs.callPackage ./. {}"
+    - uses: cachix/install-nix-action@v17
+    - run: nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
+    - run: nix-channel --update
+    - uses: actions/checkout@v4
+    - run: nix-build --show-trace -E '(import <nixpkgs> {}).python3.pkgs.callPackage ./. {}'
