@@ -11,9 +11,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: docker://nixos/nix:latest
+    - name: nix-channel --update
+      uses: docker://nixos/nix:latest
       with:
         args: nix-channel --update
-    - uses: docker://nixos/nix:latest
+    - name: nix-build
+      uses: docker://nixos/nix:latest
       with:
-        args: nix-build -E '(import <nixpkgs> {}).python3.pkgs.callPackage ./. {}'
+        args: set -x; nix-build -E '(import <nixpkgs> {}).python3.pkgs.callPackage ./. {}'
