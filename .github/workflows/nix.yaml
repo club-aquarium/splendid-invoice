@@ -1,0 +1,15 @@
+on:
+  push: {}
+  pull_request:
+    branches:
+    - master
+
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: docker://nixos/nix:latest
+      with:
+        args: nix-channel --update
