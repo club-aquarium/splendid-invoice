@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: nix-channel --update
-      uses: docker://nixos/nix:latest
+      uses: docker://docker.io/nixos/nix:latest
       with:
         args: nix-channel --update
     - name: nix-build
       uses: docker://nixos/nix:latest
       with:
-        args: set -x; nix-build -E '(import <nixpkgs> {}).python3.pkgs.callPackage ./. {}'
+        args: nix-build --show-trace -E "(import <nixpkgs> {}).python3.pkgs.callPackage ./. {}"
