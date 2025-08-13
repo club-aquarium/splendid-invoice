@@ -1,0 +1,12 @@
+on:
+  pull_request:
+  push:
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - run: sudo apt-get update
+    - run: sudo apt-get install -y python3-poppler-qt5
+    - run: rm tests/test_black.py tests/test_flake8.py tests/test_types.py
+    - run: python3 -m unittest discover -v
