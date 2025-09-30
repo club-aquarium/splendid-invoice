@@ -4,3 +4,9 @@ requires = [
     "wheel"
 ]
 build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+extend-exclude = [
+    "contrib/ZUGFeRD/2.3.3/generated",
+    "splendid_invoice/zugferd/generated",
+]
