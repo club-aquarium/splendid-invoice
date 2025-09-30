@@ -1,6 +1,6 @@
 """
 splendid-invoice
-Copyright (C) 2023  schnusch
+Copyright (C) 2023-2025  schnusch
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -33,7 +33,7 @@ from typing import (
 
 import popplerqt5  # type: ignore[import-not-found]
 
-from .base import Invoice, PaddedRow
+from ..base import Invoice, PaddedRow
 
 namespaces = {
     "rsm": "urn:ferd:CrossIndustryDocument:invoice:1p0",
@@ -228,9 +228,9 @@ def parse_xml(data: bytes) -> Iterator[PaddedRow]:
         yield row
 
 
-class Zugferd1p0Invoice(Invoice):
+class Zugferd_1_0_Invoice(Invoice):
     @classmethod
-    def load(cls, name: str) -> "Zugferd1p0Invoice":
+    def load(cls, name: str) -> "Zugferd_1_0_Invoice":
         return cls(popplerqt5.Poppler.Document.load(name))
 
     def __init__(self, doc: popplerqt5.Poppler.Document):

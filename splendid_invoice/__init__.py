@@ -1,6 +1,6 @@
 """
 splendid-invoice
-Copyright (C) 2023-2024  schnusch
+Copyright (C) 2023-2025  schnusch
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -31,7 +31,8 @@ from typing import (
 
 from .base import CSVOutput, Invoice
 from .splendid import MonospaceInvoice, NewInvoice
-from .zugferd_1p0 import Zugferd1p0Invoice
+from .zugferd.v1_0 import Zugferd_1_0_Invoice
+from .zugferd.v2_3 import Zugferd_2_0_EN16931_Invoice
 
 
 def open_stdout() -> TextIO:
@@ -99,10 +100,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     with CSVStdout() as out:
         for name in args.invoice:
             try:
-                invoice = Zugferd1p0Invoice.load(name)  # type: Invoice
+                invoice = Zugferd_2_0_EN16931_Invoice.load(name)  # type: Invoice
             except AssertionError:
                 try:
-                    invoice = MonospaceInvoice.load(name)
+                    invoice = Zugferd_1_0_Invoice.load(name)
                 except AssertionError:
-                    invoice = NewInvoice.load(name)
+                    try:
+                        invoice = MonospaceInvoice.load(name)
+                    except AssertionError:
+                        invoice = NewInvoice.load(name)
             csv_from_pdf(out, invoice, print_pages=args.verbose)

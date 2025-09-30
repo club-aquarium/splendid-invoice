@@ -3,7 +3,8 @@
 splendid-invoice is a command-line tool that parses PDF invoices from
 [Splendid Drinks](https://www.splendid-drinks.com/) or
 [Gustav Müller](https://www.gustav-mueller.de/) to CSV. Invoices from the latter
-follow the [ZUGFeRD 1.0 standard](https://www.ferd-net.de/standards/zugferd-versionsarchiv/zugferd-1.0.html)
+follow the [ZUGFeRD EN 16931 Profile](https://www.ferd-net.de/publikationen-produkte/publikationen/detailseite/zugferd-233-deutsch)
+(or [ZUGFeRD 1.0 standard](https://www.ferd-net.de/standards/zugferd-versionsarchiv/zugferd-1.0.html) for older invoices)
 so it should be able to parse all of those.
 
 ## Installation
@@ -16,14 +17,18 @@ clone the repo and run `nix-shell`
 
 ### Dependencies
 
-  * Python >= [3.8](https://docs.python.org/3/library/functools.html#functools.cached_property)
+  * Python >= 3.9
   * [popplerqt5](https://pypi.org/project/python-poppler-qt5/)
+  * [xsdata](https://github.com/tefra/xsdata)
 
 To run tests during build you also need:
 
   * [black](https://github.com/psf/black)
   * [flake8](https://flake8.pycqa.org/)
+  * [isort](https://pycqa.github.io/isort/)
+  * git
   * [mypy](https://mypy-lang.org/)
+  * xsdata\[cli\]
 
 ## Usage
 

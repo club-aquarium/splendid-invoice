@@ -3,6 +3,7 @@
   buildPythonApplication,
   pythonOlder,
   poppler-qt5,
+  xsdata,
   black,
   flake8,
   git,
@@ -14,12 +15,13 @@ buildPythonApplication {
   pname = "splendid-invoice";
   version = "0.0.0";
 
-  disabled = pythonOlder "3.8";
+  disabled = pythonOlder "3.9";
 
   src = ./.;
 
   dependencies = [
     poppler-qt5
+    xsdata
   ];
 
   checkInputs = [
@@ -27,6 +29,10 @@ buildPythonApplication {
     flake8
     isort
     mypy
+    # xsdata[cli]
+    (xsdata.overridePythonAttrs (prevAttrs: {
+      dependencies = (prevAttrs.dependencies or [ ]) ++ prevAttrs.optional-dependencies.cli;
+    }))
   ];
 
   nativeCheckInputs = [

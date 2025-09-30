@@ -1,6 +1,6 @@
 """
 splendid-invoice
-Copyright (C) 2022-2024  schnusch
+Copyright (C) 2022-2025  schnusch
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -62,7 +62,8 @@ from .splendid import (
     MonospaceInvoice,
     NewInvoice,
 )
-from .zugferd_1p0 import Zugferd1p0Invoice
+from .zugferd.v1_0 import Zugferd_1_0_Invoice
+from .zugferd.v2_3 import Zugferd_2_0_EN16931_Invoice
 
 
 def filter_by_sender(msg: Message) -> bool:
@@ -650,7 +651,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         try:
             pdf = popplerqt5.Poppler.Document.loadFromData(pdfdata)
             invoice = DummyInvoice()  # type: Invoice
-            for cls in (Zugferd1p0Invoice, MonospaceInvoice, NewInvoice):
+            for cls in (
+                Zugferd_2_0_EN16931_Invoice,
+                Zugferd_1_0_Invoice,
+                MonospaceInvoice,
+                NewInvoice,
+            ):
                 try:
                     invoice = cls(pdf)
                 except (AssertionError, ValueError):

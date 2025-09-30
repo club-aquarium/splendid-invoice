@@ -19,13 +19,11 @@ class TransportServicePaymentArrangementCodeType:
             "required": True,
         },
     )
-    list_agency_id: TransportServicePaymentArrangementCodeListAgencyIdcontentType = (
-        field(
-            init=False,
-            default=TransportServicePaymentArrangementCodeListAgencyIdcontentType.VALUE_6,
-            metadata={
-                "name": "listAgencyID",
-                "type": "Attribute",
-            },
-        )
+    list_agency_id: TransportServicePaymentArrangementCodeListAgencyIdcontentType = field(
+        init=False,
+        default=TransportServicePaymentArrangementCodeListAgencyIdcontentType.VALUE_6,
+        metadata={
+            "name": "listAgencyID",
+            "type": "Attribute",
+        },
     )
