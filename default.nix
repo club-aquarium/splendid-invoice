@@ -1,11 +1,13 @@
-{ lib
-, buildPythonApplication
-, pythonOlder
-, poppler-qt5
-, black
-, flake8
-, git
-, mypy
+{
+  lib,
+  buildPythonApplication,
+  pythonOlder,
+  poppler-qt5,
+  black,
+  flake8,
+  git,
+  isort,
+  mypy,
 }:
 
 buildPythonApplication {
@@ -16,13 +18,19 @@ buildPythonApplication {
 
   src = ./.;
 
-  propagatedBuildInputs = [ poppler-qt5 ];
+  dependencies = [
+    poppler-qt5
+  ];
 
-  nativeCheckInputs = [
+  checkInputs = [
     black
     flake8
-    git
+    isort
     mypy
+  ];
+
+  nativeCheckInputs = [
+    git
   ];
 
   pythonImportsCheck = [ "splendid_invoice" ];
