@@ -1,0 +1,41 @@
+from dataclasses import dataclass, field
+from typing import Optional
+
+from xsdata.models.datatype import XmlDate  # type: ignore[import-not-found]
+
+__NAMESPACE__ = "urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100"
+
+
+@dataclass
+class DateType:
+    date_string: Optional["DateType.DateString"] = field(
+        default=None,
+        metadata={
+            "name": "DateString",
+            "type": "Element",
+            "namespace": "urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100",
+        },
+    )
+    date: Optional[XmlDate] = field(
+        default=None,
+        metadata={
+            "name": "Date",
+            "type": "Element",
+            "namespace": "urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100",
+        },
+    )
+
+    @dataclass
+    class DateString:
+        value: str = field(
+            default="",
+            metadata={
+                "required": True,
+            },
+        )
+        format: Optional[str] = field(
+            default=None,
+            metadata={
+                "type": "Attribute",
+            },
+        )
