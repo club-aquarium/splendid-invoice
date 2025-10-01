@@ -45,9 +45,9 @@ from typing import (
     cast,
 )
 
-import popplerqt5  # type: ignore
-from PyQt5.QtCore import QRectF, QSizeF  # type: ignore
-from PyQt5.QtGui import QColor  # type: ignore
+import popplerqt5  # type: ignore[import-not-found]
+from PyQt5.QtCore import QRectF, QSizeF  # type: ignore[import-not-found]
+from PyQt5.QtGui import QColor  # type: ignore[import-not-found]
 
 from .base import (
     Invoice,

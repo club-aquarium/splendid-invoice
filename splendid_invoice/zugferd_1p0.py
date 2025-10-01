@@ -31,7 +31,7 @@ from typing import (
     Union,
 )
 
-import popplerqt5  # type: ignore
+import popplerqt5  # type: ignore[import-not-found]
 
 from .base import Invoice, PaddedRow
 

@@ -32,5 +32,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: pip3 install mypy==1.15.0
+    - run: pip3 install 'mypy>=1.18.0'
     - run: mypy .

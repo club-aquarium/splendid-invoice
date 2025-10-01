@@ -47,7 +47,7 @@ from typing import (
     cast,
 )
 
-import popplerqt5  # type: ignore
+import popplerqt5  # type: ignore[import-not-found]
 
 from . import (
     CSVStdout,

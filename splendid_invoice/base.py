@@ -23,6 +23,7 @@ from collections.abc import Iterable
 from datetime import date
 from types import TracebackType
 from typing import (
+    TYPE_CHECKING,
     Any,
     Iterator,
     List,  # noqa: F401
@@ -33,6 +34,9 @@ from typing import (
     Type,
     TypeVar,
 )
+
+if TYPE_CHECKING:
+    from _csv import _QuotingType
 
 _T_contra = TypeVar("_T_contra", contravariant=True)
 
@@ -47,7 +51,7 @@ T = TypeVar("T", bound="CSVOutput")
 
 class CSVOutput(object):
     delimiter = ";"
-    quoting = csv.QUOTE_ALL
+    quoting: "_QuotingType" = csv.QUOTE_ALL
 
     def __init__(self, out: SupportsWrite[str]):
         self._writer = csv.writer(out, delimiter=self.delimiter, quoting=self.quoting)

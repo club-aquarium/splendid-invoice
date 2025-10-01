@@ -32,7 +32,7 @@ from typing import (
     cast,
 )
 
-import popplerqt5  # type: ignore
+import popplerqt5  # type: ignore[import-not-found]
 
 from splendid_invoice import Invoice, MonospaceInvoice, NewInvoice
 from splendid_invoice.base import PaddedRow
