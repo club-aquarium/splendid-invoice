@@ -1,0 +1,10 @@
+{
+  "yaml": {
+    // do not indent lists twice
+    "indentBlockSequenceInMap": false,
+  },
+  "plugins": [
+    "https://plugins.dprint.dev/ruff-0.4.6.wasm",
+    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.5.1.wasm",
+  ],
+}
