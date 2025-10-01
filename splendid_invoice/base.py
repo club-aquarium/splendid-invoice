@@ -22,10 +22,10 @@ import sys
 from collections.abc import Iterable
 from datetime import date
 from types import TracebackType
-from typing import List  # noqa: F401
 from typing import (
     Any,
     Iterator,
+    List,  # noqa: F401
     Optional,
     Protocol,
     TextIO,

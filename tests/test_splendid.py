@@ -23,8 +23,14 @@ import pprint
 import re
 import unittest
 from datetime import datetime
-from typing import Dict  # noqa: F401
-from typing import Callable, List, Optional, Type, cast
+from typing import (
+    Callable,
+    Dict,  # noqa: F401
+    List,
+    Optional,
+    Type,
+    cast,
+)
 
 import popplerqt5  # type: ignore
 
@@ -118,9 +124,9 @@ def create_testcase_class(
                 csvpath = pdf.path[:-3] + "csv"
                 if os.path.exists(csvpath):
                     method_name = filename_to_test_method_name(pdf.name)
-                    assert (
-                        method_name not in methods
-                    ), f"duplicate method name: {method_name}"
+                    assert method_name not in methods, (
+                        f"duplicate method name: {method_name}"
+                    )
                     methods[method_name] = create_test_method(
                         pdf.path,
                         csvpath,

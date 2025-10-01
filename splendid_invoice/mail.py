@@ -53,8 +53,11 @@ from . import (
     CSVStdout,
     csv_from_pdf,
 )
-from .base import Invoice  # noqa: F401
-from .base import CSVOutput, DummyInvoice
+from .base import (
+    CSVOutput,
+    DummyInvoice,
+    Invoice,  # noqa: F401
+)
 from .splendid import (
     MonospaceInvoice,
     NewInvoice,
@@ -462,9 +465,9 @@ class GitCSVOutputAppend(GitCSVOutput):
             self.out.seek(0)
             self.write_buffered_headers()
             src = self.out.tell()
-            assert (
-                src <= self.old_size
-            ), f"buffered headers overwrote part of the new rows (self.out.tell() = {src}, self.old_size = {self.old_size})"
+            assert src <= self.old_size, (
+                f"buffered headers overwrote part of the new rows (self.out.tell() = {src}, self.old_size = {self.old_size})"
+            )
             self.move_left(cast(BinaryIO, self.out), src, self.old_size)
             self.out.truncate()
 

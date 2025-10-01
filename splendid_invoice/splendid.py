@@ -27,13 +27,13 @@ from datetime import date, datetime
 from functools import partial
 from heapq import merge
 from itertools import islice, zip_longest
-from typing import Mapping  # noqa: F401
 from typing import (
     Any,
     Callable,
     Iterator,
     List,
     Literal,
+    Mapping,  # noqa: F401
     NamedTuple,
     Optional,
     Set,
@@ -166,9 +166,9 @@ class TextGrid:
         w = int(round(bbox.width() / self.gridx))
         h = int(round(bbox.height() / self.gridy))
         assert h == 1, f"h == {1} expected for monospace font"
-        assert (
-            len(box.text()) == w
-        ), f"len({repr(box.text())}) == {w} expected for monospace font"
+        assert len(box.text()) == w, (
+            f"len({repr(box.text())}) == {w} expected for monospace font"
+        )
         return GridSpace(y, x, -h, -w)
 
     def iter_rows(self) -> Iterator[List[GridTextBox]]:
@@ -503,9 +503,7 @@ def guess_columns(
         # are left.
         # We cannot add words to a wordchain so we have to convert every column
         # to a list of start words.
-        row_columns = [
-            (get_word_chain_dimensions(tbox), [tbox]) for tbox in row
-        ]  # type: List[Tuple[TableColumn, List[popplerqt5.Poppler.TextBox]]]
+        row_columns = [(get_word_chain_dimensions(tbox), [tbox]) for tbox in row]  # type: List[Tuple[TableColumn, List[popplerqt5.Poppler.TextBox]]]
         while len(row_columns) > 5:
             join_closest_columns_inplace(row_columns)
 
@@ -1204,9 +1202,9 @@ class NewInvoice(Invoice, QueuedAnnotations):
                 )  # type: Tuple[str, Optional[date]]
 
                 columns = guess_columns(rows, page)
-                assert (
-                    len(columns) == 5
-                ), f"expected table to have 5 columns, got {len(columns)}"
+                assert len(columns) == 5, (
+                    f"expected table to have 5 columns, got {len(columns)}"
+                )
 
                 yield from self._pad_rows(
                     self._parse_table(columns, rows, page),

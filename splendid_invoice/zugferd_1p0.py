@@ -17,10 +17,10 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 
-import xml.etree.cElementTree as ET
 import sys
+import xml.etree.cElementTree as ET
 from datetime import date, datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import (
     Callable,
     Iterator,
@@ -184,9 +184,9 @@ def parse_line_item(
     )
     tax = try_get(settlement_elem, "ram:ApplicableTradeTax", parse_tax, "")
 
-    assert (
-        Decimal(net_base_quantity.replace(",", ".")) == 1
-    ), f"expected base quantity to be 1, not {repr(net_base_quantity)}"
+    assert Decimal(net_base_quantity.replace(",", ".")) == 1, (
+        f"expected base quantity to be 1, not {repr(net_base_quantity)}"
+    )
     assert net_base_quantity_unit_code == quantity_unit_code
 
     return (

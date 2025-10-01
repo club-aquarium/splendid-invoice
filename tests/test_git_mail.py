@@ -27,11 +27,16 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from datetime import datetime
 from functools import partial
-from typing import List  # noqa: F401
-from typing import Iterator, Optional, Tuple
+from typing import (
+    Iterator,
+    List,  # noqa: F401
+    Optional,
+    Tuple,
+)
 from unittest.mock import patch
 
 import splendid_invoice.mail
+
 from .test_git_full_mailbox import csv_rows
 
 
