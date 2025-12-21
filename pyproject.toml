@@ -1,9 +1,47 @@
-[build-system]
-requires = [
-    "setuptools>=42",
-    "wheel"
+[project]
+name = "splendid_invoice"
+version = "0.0"
+description = "Parse PDF invoices from Splendid Drinks"
+authors = [
+    { name = "schnusch" }
 ]
+license = "GPL-2.0-or-later"
+license-files = [ "COPYING.md" ]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "python-poppler-qt5",
+    "xsdata",
+]
+
+[project.scripts]
+splendid-invoice = "splendid_invoice:main"
+splendid-mail = "splendid_invoice.mail:main"
+
+[project.optional-dependencies]
+test = [
+    "black",
+    "flake8",
+    "mypy",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["splendid_invoice*"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.flake8]
+max-line-length = 88
+exclude = [".git", "__pycache__", "build", "dist"]
+
+[tool.mypy]
+warn_redundant_casts = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+no_implicit_optional = true
 
 [tool.ruff]
 extend-exclude = [

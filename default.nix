@@ -2,6 +2,7 @@
   lib,
   buildPythonApplication,
   pythonOlder,
+  setuptools,
   poppler-qt5,
   xsdata,
   black,
@@ -11,13 +12,26 @@
   mypy,
 }:
 
+let
+
+  src = ./.;
+
+  pyproject = builtins.fromTOML (builtins.readFile "${src}/pyproject.toml");
+
+in
+
 buildPythonApplication {
   pname = "splendid-invoice";
-  version = "0.0.0";
+  inherit (pyproject.project) version;
+  pyproject = true;
 
   disabled = pythonOlder "3.9";
 
-  src = ./.;
+  inherit src;
+
+  build-system = [
+    setuptools
+  ];
 
   dependencies = [
     poppler-qt5
@@ -42,7 +56,7 @@ buildPythonApplication {
   pythonImportsCheck = [ "splendid_invoice" ];
 
   meta = with lib; {
-    description = "Parse PDF invoices from Splendid Drinks";
+    inherit (pyproject.project) description;
     license = licenses.gpl2Plus;
     maintainers = with maintainers; [ schnusch ];
   };
