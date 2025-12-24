@@ -969,11 +969,29 @@ NewColumns = Tuple[
 ]
 
 
-# we use the look-behind as well as the \b at the beginning to match these as well:
-# "Bulmers Original Cid.EW12x0,50"
-# "Kolle Mate Bio20x0,50"
-# "Quartiermeister Pils Bio20x0,50"
-size_regex = re.compile(r"(?:\b|(?<=\bBio)|(?<=\bEW))((?:\d+x)*\d+(?:,\d+)?)l?\b")
+size_regex = re.compile(
+    r"""(?x)
+        # do not match the '2' in 'CO2'
+        (?<!\bCO)(?!2\b)
+        # match '__x_,__'
+        ((?:\d+x)*\d+(?:,\d+)?)
+        # do not match if any of these are trailing
+        (?!\s*(?:
+            \d
+           |,
+           |%
+           |€
+           |EUR
+           |Flasche
+           |Jahre
+           |Kasten
+           |kg
+           |x
+        ))
+        # remove optional trailing 'l' as well
+        (?:\s*l\b)?
+    """
+)
 
 
 def extract_size(name: str) -> Tuple[str, str]:
@@ -984,9 +1002,7 @@ def extract_size(name: str) -> Tuple[str, str]:
     i, j = m.span()
     size = m[1]
     suffix = name[j:].lstrip(" ")
-    if suffix.startswith("EUR") or suffix.startswith("%"):
-        return (name, "")
-    elif i == 0:
+    if i == 0:
         return (suffix, size)
     else:
         prefix = name[:i].rstrip(" ")
